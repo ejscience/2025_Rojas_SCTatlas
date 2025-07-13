@@ -52,6 +52,47 @@ This repository details the code required to replicate the transcriptomics analy
 
  
  
+## Versions of packages needed:
+| Package / Tool          | Version |
+|-------------------------|---------|
+| **R**                   | 4.3.0   |
+| SoupX                   | 1.6.2   |
+| Seurat                  | 5.3.0   |
+| scCustomize             | 3.0.1   |
+| DoubletFinder           | 2.0.4   |
+| scDblFinder             | 1.16.0  |
+| SingleCellExperiment    | 1.24.0  |
+| ACT                     |  N/A       |
+| Harmony                 | 1.2.0   |
+| clustree                | 0.5.1   |
+| infercnv                | 1.19.1  |
+| scProportionTest        | 0.0.0.9 |
+| perturbLM               | 1.0.0   |
+| entropy                 | 1.3.1   |
+| Semla                   | 1.1.6   |
+| CARD                    | 1.1     |
+| biomaRt                 | 2.58.2  |
+| qvalue                  | 2.34.0  |
+| msigdbr                 | 7.5.1   |
+| clusterProfiler         | 4.10.1  |
+| org.Hs.eg.db            | 3.18.0  |
+| DESeq2                  | 1.42.1  |
+| ggplot2                 | 3.5.1   |
+| ggprism                 | 1.0.5   |
+| circlize                | 0.4.16  |
+| ComplexHeatmap          | 2.18.0  |
+| ggpattern               | 1.1.1   |
+| viridis                 | 0.6.5   |
+| scales                  | 1.3.1   |
+| ggrepel                 | 0.9.5   |
+| CellRanger              | 7.0.1   |
+| spaceranger             | 3.0.1   |
+| LoupeBrowser            | 7.0.1   |
+| cellsnp-lite            | 1.2.3   |
+| Annovar                 | 2025Mar21 |
+
+
+
 ## Contact
 
 For any questions or further information, reach out to the project lead and corresponding authors.

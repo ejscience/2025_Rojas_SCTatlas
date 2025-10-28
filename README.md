@@ -9,7 +9,7 @@
 
 ## Data availability (read first)
 - **Raw FASTQs** must email corresponding authors **diana.laird@ucsf.edu, tippi.mackenzie@ucsf.edu, ernesto.rojas@ucsf.edu,**.  We must have an MTA with UCSF and your institute.
-- **Processed objects (Seurat/snRNA-seq & Visium), metadata, and helper tables**: [Zenodo DOI]().  
+- **Processed objects (Seurat/snRNA-seq & Visium), metadata, and helper tables**: [Zenodo DOI](https://doi.org/10.5281/zenodo.17469320).  
 - **External references** (ovarian & ESC-derived teratomas): GEO: **GSE229343**, **GSE156170**, respectively.
 
 > **Important:** This GitHub repository does **not** include patient-level or processed `.rds` objects. Download the Zenodo bundle and place files locally as described below.
@@ -25,7 +25,7 @@
 │   └── 20_figures_main/         # figure notebooks (1–5)
 ├── data/
 │   ├── raw/                     # Our emails are here for MTA request
-│   ├── processed/               # Zenodo Link here too
+│   ├── processed/               # Zenodo Link here too: https://doi.org/10.5281/zenodo.17469320
 │   └── metadata_forProcessing/  # gene sets, XCI tables (text/xlsx/gmt)
 ├── scripts_xchr/                # variant calling helpers (cellsnp-lite, QC)
 └── README.md

@@ -1,0 +1,353 @@
+---
+title: "Finding the Right Resolution"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+{ library(Seurat)
+  library(SeuratWrappers)
+  library(tidyverse)
+  library(Matrix)
+  library(scales)
+  library(cowplot)
+  library(RCurl)
+  #library(Matrix.utils) #
+  library(clustree)
+  library(ComplexHeatmap) 
+  library(readxl)
+  #library(EnhancedVolcano) #
+  library(BiocManager)
+  #library(AnnotationHub) #
+  #library(SoupX)
+  library(scCustomize)
+  library(DoubletFinder)
+  library(ggprism)
+  library(patchwork)
+  library(reticulate)
+}
+
+
+```
+
+
+```{r}
+
+nucSamples = readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_MixedCellIDs.rds")
+#Define Color palette
+color_use <- DiscretePalette_scCustomize(
+  70,
+  palette = 'varibow',
+  shuffle_pal = T,
+  seed = 12
+)
+nucSamples <- JoinLayers(nucSamples)
+
+nucSamples <- subset(x = nucSamples, 
+                          subset= (nCount_RNA >= 2000) & 
+                            (nCount_RNA <= 25000) & 
+                            (nFeature_RNA >= 2000) &
+                            (percent_mito < 5) ) #& #(percent.ribo < 20))
+```
+
+
+```{r}
+DimPlot_scCustom(
+  nucSamples,
+  reduction = "umap.harmony",
+  group.by = c("orig.ident"),
+  combine = T, label.size = 2,
+  colors_use = color_use
+)
+
+DimPlot_scCustom(
+  nucSamples,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters"),
+  combine = T, label.size = 2
+)
+```
+
+
+```{r}
+nucSamples <- NormalizeData(nucSamples, normalization.method = "LogNormalize", scale.factor = 10000) %>%
+  FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>%
+  ScaleData() %>%
+  RunPCA(npcs = 60)
+
+# Save ElbowPlot
+#pdf_name <- paste0("figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_ElbowPlot.pdf")
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_ElbowPlot.pdf")
+p = ElbowPlot(nucSamples, ndims = 60) + geom_vline(xintercept=22, linetype="dotted")
+print(p)
+dev.off()
+
+# Find the right clustering resolution and create clustree
+nucSamples <- FindNeighbors(nucSamples, reduction = "harmony", dims = 1:22)
+nucSamples <- FindClusters(nucSamples, resolution = seq(0.1, 1.2, by = 0.1))
+
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_clustree.pdf", width = 20, height = 30)
+p = clustree(nucSamples, layout = "sugiyama", prefix = "RNA_snn_res.") + 
+  labs(title = "Nuclei Samples Clustree") +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p)
+dev.off()
+
+# Run UMAP
+nucSamples <- RunUMAP(nucSamples, dims = 1:22, reduction = "harmony", reduction.name = "umap.harmony")
+
+# Get all resolution columns for UMAP
+group_by_cols <- sort(grep("RNA_snn_res.", colnames(nucSamples@meta.data), value = TRUE))
+
+# Save UMAP
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_all-UMAPs.pdf", width = 14)
+p = DimPlot_scCustom(nucSamples, 
+                     reduction = "umap.harmony", 
+                     combine = F, 
+                     label.size = 2, 
+                     group.by = group_by_cols, 
+                     label = TRUE, 
+                     colors_use = color_use)
+print(p)
+dev.off()
+```
+
+
+
+```{r Regressing Out Cell Cycle, eval=FALSE, include=FALSE}
+nucSamples <- NormalizeData(nucSamples, normalization.method = "LogNormalize", scale.factor = 10000) %>%
+  FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>%
+  ScaleData(, vars.to.regress = c("S.Score", "G2M.Score")) %>%
+  RunPCA(npcs = 60)
+
+# Save ElbowPlot
+#pdf_name <- paste0("figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_ElbowPlot.pdf")
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_ElbowPlot_regressed.pdf")
+p = ElbowPlot(nucSamples, ndims = 60) + geom_vline(xintercept=26, linetype="dotted")
+print(p)
+dev.off()
+
+# Find the right clustering resolution and create clustree
+nucSamples <- FindNeighbors(nucSamples, reduction = "harmony", dims = 1:26)
+nucSamples <- FindClusters(nucSamples, resolution = seq(0.1, 1.5, by = 0.1))
+
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_clustree_regressed.pdf", width = 20, height = 30)
+p = clustree(nucSamples, layout = "sugiyama", prefix = "RNA_snn_res.") + 
+  labs(title = "Nuclei Samples Clustree") +
+  theme(plot.title = element_text(hjust = 0.5))
+print(p)
+dev.off()
+
+# Run UMAP
+nucSamples <- RunUMAP(nucSamples, dims = 1:26, reduction = "harmony", reduction.name = "umap.harmony.regressed")
+
+# Get all resolution columns for UMAP
+group_by_cols <- sort(grep("RNA_snn_res.", colnames(nucSamples@meta.data), value = TRUE))
+
+# Save UMAP
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/nucSamples_all-UMAPs_regressed.pdf", width = 14)
+p = DimPlot_scCustom(nucSamples, 
+                     reduction = "umap.harmony.regressed", 
+                     combine = F, 
+                     label.size = 2, 
+                     group.by = group_by_cols, 
+                     label = TRUE, 
+                     colors_use = color_use)
+print(p)
+dev.off()
+```
+
+
+
+```{r}
+DimPlot_scCustom(
+  nucSamples,
+  reduction = "umap.harmony",
+  group.by = c("harmony_clusters", "RNA_snn_res.0.1"),
+  combine = T, label.size = 2
+)
+
+DimPlot_scCustom(
+  nucSamples,
+  reduction = "umap.harmony",
+  group.by = c("RNA_snn_res.0.1"), split.by = "orig.ident",
+  combine = T, label.size = 2
+)
+```
+
+```{r}
+DimPlot_scCustom(
+  nucSamples,
+  reduction = "umap.harmony",
+  group.by = c("NamedMixedClusters"),
+  combine = T, label.size = 2
+)
+```
+
+```{r}
+pdf(file = "figures/20240524_nucSamples_CorrectResolutionAndNamingCellTypes/MixedSplitSCTs_NamedClusters_UMAP.pdf", width = 9)
+DimPlot_scCustom(
+    nucSamples,
+    reduction = "umap.harmony",
+    group.by = c("NamedMixedClusters"), split.by = "orig.ident",
+    combine = T, label.size = 2, label = T, repel = T, figure_plot = T, split_seurat = T, num_columns = 3
+)
+dev.off()
+```
+
+
+
+
+```{r}
+Idents(nucSamples) <- "RNA_snn_res.0.1"
+nucSamples <- RenameIdents(object = nucSamples, 
+                      '0' = "Fibro.0",
+                      '1' = "Epi.1",
+                      '2' = "Endo.2",
+                      '3' = "Astrocytes.3",
+                      '4' = "Mac.4",
+                      '5' = "SmMusc.5",
+                      '6' = "Cycling.6",
+                      '7' = "EpiCiliated.7",
+                      '8' = "Chromaffin.8",
+                      '9' = "Neuron.9",
+                      '10' = "Oligo.10",
+                      '11' = "T_NKT.11")
+nucSamples@meta.data$LowRes <- Idents(nucSamples)
+
+```
+
+```{r}
+DimPlot_scCustom(
+    nucSamples,
+    reduction = "umap.harmony",
+    group.by = c("LowRes"),
+    combine = T, label = T, label.box = T, repel = T, figure_plot = T, split_seurat = T
+)
+```
+
+# Add a few more metadata columns
+
+```{r}
+
+# Create chromaffinpos column
+nucSamples$chromaffinpos <- NA
+nucSamples$chromaffinpos[which(str_detect(nucSamples$cells, "^SCT02_"))] <- "ChromaffinPositive"
+nucSamples$chromaffinpos[which(str_detect(nucSamples$cells, "^SCT03_"))] <- "ChromaffinNegative"
+nucSamples$chromaffinpos[which(str_detect(nucSamples$cells, "^SCT01n_"))] <- "ChromaffinNegative"
+nucSamples$chromaffinpos[which(str_detect(nucSamples$cells, "^SCT06_"))] <- "ChromaffinPositive"
+nucSamples$chromaffinpos[which(str_detect(nucSamples$cells, "^SCT09_"))] <- "ChromaffinNegative"
+nucSamples$chromaffinpos[which(str_detect(nucSamples$cells, "^SCT10_"))] <- "ChromaffinPositive"
+
+
+DimPlot_scCustom(
+    nucSamples,
+    reduction = "umap.harmony",
+    group.by = c("LowRes"), split.by = "chromaffinpos",
+    combine = T, label = F, label.box = T, repel = T, figure_plot = T, split_seurat = T
+)
+
+```
+
+
+```{r}
+
+DimPlot_scCustom(
+    nucSamples,
+    reduction = "umap.harmony",
+    group.by = c("LowRes"), split.by = "SolidCystic",
+    combine = T, label = F, label.box = T, repel = T, figure_plot = T, split_seurat = T
+)
+
+```
+
+
+```{r}
+plotClusterComparisons <- function(seurat_obj, cluster_column, dataset_column, color_palette) {
+  # Prepare the data for plotting
+  sample_cluster_data <- seurat_obj@meta.data %>%
+    select(!!sym(dataset_column), !!sym(cluster_column)) %>%
+    group_by(!!sym(cluster_column), !!sym(dataset_column)) %>%
+    summarise(count = n(), .groups = 'drop') %>%
+    na.omit()  # Omit NA values
+  
+  # Calculate the total count per cluster
+  total_counts <- sample_cluster_data %>%
+    group_by(!!sym(cluster_column)) %>%
+    summarise(total_count = sum(count), .groups = 'drop')
+  
+  # Join the data to calculate proportions
+  sample_cluster_data <- sample_cluster_data %>%
+    left_join(total_counts, by = c(cluster_column)) %>%
+    mutate(proportion = count / total_count)
+  
+  # Proportion plot with flipped axes
+  prop_plot <- ggplot(sample_cluster_data, aes(y = !!sym(cluster_column), x = proportion, fill = !!sym(dataset_column))) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual(values = color_palette) +
+    #theme_prism() +
+    labs(title = paste0("Fraction of Cells in ",cluster_column), y = "Cluster", x = "Fraction of Cells")
+  
+  # Total count plot with flipped axes and log scale
+  count_plot <- ggplot(total_counts, aes(y = !!sym(cluster_column), x = total_count)) +
+    geom_col(fill = "grey60") +
+    scale_x_log10() +
+    #theme_prism() +
+    labs(title = paste0("Cells per ",cluster_column), y = "Cluster", x = "Cells per cluster (log10)")
+  
+  # Combine the plots with a 3:1 width ratio
+  combined_plot <- prop_plot + count_plot + plot_layout(widths = c(4.5, 1))
+  
+  return(combined_plot)
+}
+```
+
+
+```{r}
+colors <- scCustomize_Palette(num_groups = 12, ggplot_default_colors = F)
+plotClusterComparisons(nucSamples, "orig.ident","LowRes", color_palette = colors) & theme_minimal()
+plotClusterComparisons(nucSamples, "SolidCystic","LowRes", color_palette = colors) & theme_minimal()
+plotClusterComparisons(nucSamples, "chromaffinpos","LowRes", color_palette = colors) & theme_minimal()
+
+```
+
+
+```{r}
+library(scProportionTest)
+prop_test <- sc_utils(nucSamples)
+prop_test <- permutation_test(sc_utils_obj = prop_test, cluster_identity = "LowRes", 
+                              sample_1 = "ChromaffinPositive",
+                              sample_2 = "ChromaffinNegative",
+                              sample_identity = "chromaffinpos", 
+                              n_permutations = 5000
+)
+```
+
+
+```{r}
+permutation_plot(prop_test, FDR_threshold = 0.05, log2FD_threshold = 1)
+```
+
+
+
+
+
+```{r}
+prop_test <- permutation_test(sc_utils_obj = prop_test, cluster_identity = "LowRes", 
+                              sample_1 = "solid",
+                              sample_2 = "cystic",
+                              sample_identity = "SolidCystic", 
+                              n_permutations = 5000
+)
+```
+
+
+```{r}
+permutation_plot(prop_test, FDR_threshold = 0.05, log2FD_threshold = 1)
+```
+
+```{r}
+saveRDS(nucSamples, file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+```

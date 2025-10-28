@@ -1,0 +1,881 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(scCustomize)
+library(ggprism)
+library(colorRamp2)
+library(tidyverse)
+library(ComplexHeatmap)
+library(ggpattern)
+library(viridis)
+library(scales)
+library(DESeq2)
+library(ggrepel)
+
+get_legend <- function(my_plot) {
+  tmp <- ggplot_gtable(ggplot_build(my_plot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+
+# Immune (Blue) shades
+Immune_shades <- c("#85C1E9", "#5DADE2", "#3498DB", "#2980B9", "#1F618D")
+
+# Neuroectoderm (Red) shades
+Neuroectoderm_shades <- c("#E57373", "#D64A4A", "#B53A3A", "#A83232", "#F5A09E")
+
+# Epithelia (Green) shades
+Epithelia_shades <- c("#A8E6A3", "#7CC47F", "#61B14B", "#88C992", "#4E9835", "#009A44", "#3CB371")
+
+# Stroma (Purple) shades
+Stroma_shades <- c("#D1A1DA", "#C882D5", "#A259C0", "#8E38A7", "#754C96", "#A67BB4", "#B46BB2", "#6B3583")
+
+# Endothelia (Orange) shades
+Endothelia_shades <- c("#F9A14B", "#F47D2D", "#D36E20", "#FFB14C", "#D37D00")
+
+# Combine all shades into one palette
+pal1 <- c(
+  Epithelia_shades,
+  Stroma_shades,
+  Endothelia_shades,
+  Immune_shades,
+  Neuroectoderm_shades
+)
+
+# Assign names to the colors
+names(pal1) <- c(
+  "BPIFB1+_epi",
+  "OCT4+_epi",
+  "LGR5+_epi",
+  "Epithelia_spare",
+  "cycl_epi",
+  "cilia_epi",  
+  "enterochromaffin", # Extra in case you need it
+
+  "fibroblast",
+  "COL12A1+_myofibro",
+  "sm_musc",
+  "chondrocyte",
+  "cycl_mesench",
+  "PAX7+_musc_MSC",
+  "sk_musc",
+  "Stroma_spare2",  # Extra in case you need it
+
+  "vasc_endo",
+  "vein_endo",
+  "lymph_endo",
+  "cycl_endo",
+  "Endothelia_spare",  # Extra in case you need it
+
+  "mac",
+  "infl_mac",
+  "t_cell",
+  "mast",
+  "nkt",
+
+  "GFAP+_astro_radGlia",
+  "neuro",
+  "oligo",
+  "CUX2+_cilia_astro_radGlia",
+  "Ecto_spare"
+)
+
+# Check the final palette
+pal1
+
+
+pal_broad <- c("Stroma" =  "#9467bd", "Epithelia" = "#2ca02c", "Endothelia" = "#ff7f0e", "Neuroectoderm" = "#d62728", "Immune" = "#1f77b4")
+pal_solidcystic <- c("solid" = "#696969", "cystic" = "#D3D3D3")
+pal_epithrichpoor <- c("EpitheliaRich" = "orange", "EpitheliaPoor" = "blue", "epithelia_rich" = "orange", "epithelia_poor"= "blue")
+set.seed(12345)
+
+```
+
+# Load the data
+
+```{r}
+# Get the samplees in #####
+nucSamples <- readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+
+metadata <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+nucSamples@meta.data = metadata
+rm(metadata)
+
+nucSamples$EpitheliaRichPoor = factor(nucSamples$EpitheliaRichPoor, levels = c("EpitheliaPoor", "EpitheliaRich"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+Idents(nucSamples) <- "orig.ident"
+nucSamples <- RenameIdents(nucSamples, "SCT01" = "epitheliaPoor",
+                      "SCT03" = "epitheliaPoor", 
+                      "SCT09" = "epitheliaPoor",
+                       "SCT10" = "epitheliaRich_OCT4hi", 
+                       "SCT02" = "epitheliaRich_OCT4lo",
+                     "SCT06" = "epitheliaRich_OCT4lo")
+nucSamples$EpitheliaSplit <- Idents(nucSamples)
+nucSamples$EpitheliaSplit = factor(nucSamples$EpitheliaSplit, levels = c("epitheliaRich_OCT4hi", "epitheliaPoor", "epitheliaRich_OCT4lo"))
+
+
+# Create a new metadata column "Sex" and assign "Female" by default
+nucSamples$Sex <- "Female"
+# Assign "Male" to cells from SCT06
+nucSamples$Sex[nucSamples$orig.ident == "SCT06"] <- "Male"
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples
+DimPlot_scCustom(nucSamples, reduction = "umap.harmony", group.by = "HiResNamedOrdered", colors_use = pal1)
+
+
+```
+
+
+
+# Get only the counts into an object for Spatial
+
+Here I pulled all the data into 2 important objects `nucSamples` and `spatial_seu` which both are containing ONLY our raw counts. These will be then combined to make a combined bulk dataset. 
+
+```{r}
+# # Step 1: Extract the raw RNA counts
+# raw_counts <- GetAssayData(nucSamples, assay = "RNA", layer = "counts")
+# # Step 2: Extract the metadata
+# metadata <- nucSamples@meta.data
+# # Step 3: Create a new Seurat object with only the raw counts and metadata
+# nucSamples <- CreateSeuratObject(counts = raw_counts, meta.data = metadata)
+
+
+SCT04edge <- Load10X_Spatial(data.dir = "/mnt/usb/rojas/spatialtranscriptomics/spaceranger_outs/SCT04redo/outs/")
+# Step 1: Extract the raw RNA counts
+raw_counts <- GetAssayData(SCT04edge, assay = "Spatial", layer = "counts")
+# Step 2: Extract the metadata
+metadata <- SCT04edge@meta.data
+# Step 3: Create a new Seurat object with only the raw counts and metadata
+SCT04edge <- CreateSeuratObject(counts = raw_counts, meta.data = metadata)
+SCT04edge@meta.data <- SCT04edge@meta.data %>%
+  mutate(orig.ident = recode(orig.ident,
+                             "SeuratProject" = "SCT04edge"))
+
+SCT04middle <- Load10X_Spatial(data.dir = "/mnt/usb/rojas/spatialtranscriptomics/spaceranger_outs/SCT04man/SCT04/outs/")
+# Step 1: Extract the raw RNA counts
+raw_counts <- GetAssayData(SCT04middle, assay = "Spatial", layer = "counts")
+# Step 2: Extract the metadata
+metadata <- SCT04middle@meta.data
+# Step 3: Create a new Seurat object with only the raw counts and metadata
+SCT04middle <- CreateSeuratObject(counts = raw_counts, meta.data = metadata)
+SCT04middle@meta.data <- SCT04middle@meta.data %>%
+  mutate(orig.ident = recode(orig.ident,
+                             "SeuratProject" = "SCT04middle"))
+
+SCT05 <- Load10X_Spatial(data.dir = "/mnt/usb/rojas/spatialtranscriptomics/spaceranger_outs/SCT05/outs")
+# Step 1: Extract the raw RNA counts
+raw_counts <- GetAssayData(SCT05, assay = "Spatial", layer = "counts")
+# Step 2: Extract the metadata
+metadata <- SCT05@meta.data
+# Step 3: Create a new Seurat object with only the raw counts and metadata
+SCT05 <- CreateSeuratObject(counts = raw_counts, meta.data = metadata)
+SCT05@meta.data <- SCT05@meta.data %>%
+  mutate(orig.ident = recode(orig.ident,
+                             "SeuratProject" = "SCT05"))
+spatial_seu <- merge(x = SCT04edge, 
+                       y = c(SCT04middle, SCT05),
+                       add.cell.id = c("SCT04edge", "SCT04middle", "SCT05"))
+spatial_seu <- JoinLayers(spatial_seu)
+```
+
+# Remove low counted dots from spatial
+
+```{r}
+spatial_seu@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=nFeature_RNA, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("Genes per Cell") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10() + # makes x axis log scale
+  geom_vline(xintercept = 2000) # vertical line at X transcripts per cell
+  
+#Density Plot - Counts per cell
+spatial_seu@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=nCount_RNA, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("UMI") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10() + # makes x axis log scale
+  geom_vline(xintercept = 2000) + # vertical line at 500 transcripts per cell
+  geom_vline(xintercept = 20000, linetype="dotted") # vertical line at 500 transcripts per cell
+
+```
+
+This is the same gene and counts that I used from the snRNAseq to have lowest cutoff
+
+```{r}
+spatial_seu <- subset(x = spatial_seu, 
+                          subset= (nCount_RNA >= 2000) &
+                            (nFeature_RNA >= 2000) )
+Idents(spatial_seu) = "orig.ident"
+```
+
+
+```{r}
+# Set a seed for reproducibility
+set.seed(12345)  # You can change the number if you prefer a different seed
+
+# Define the number of cells (nuclei) you want to sample per sample
+target_nuclei <- 3210  # For all samples SCT04edge had the least number of cells
+
+spatial_seu <- spatial_seu %>%
+  subset(cells = unlist(lapply(unique(spatial_seu$orig.ident), function(sample) {
+    sample_cells <- WhichCells(spatial_seu, idents = sample)
+    
+    if (length(sample_cells) > target_nuclei) {
+      sample(sample_cells, target_nuclei)
+    } else {
+      sample_cells  # If fewer cells than target, keep all
+    }
+  })))
+
+# Verify the downsampled Seurat spatial_seuect
+table(spatial_seu$orig.ident)  # Check the cell numbers per sample
+
+spatial_seu <- NormalizeData(spatial_seu) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA()
+var_genes <- VariableFeatures(object = spatial_seu)
+```
+
+```{r}
+# Identify the 10 most highly variable genes
+top15 <- head(VariableFeatures(spatial_seu), 15)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(spatial_seu)
+plot2 <- LabelPoints(plot = plot1, points = top15, repel = TRUE)
+
+CombinePlots(plots = list(plot1, plot2))
+
+```
+
+# Move to making counts for the spatial data
+
+
+```{r}
+cts <- AggregateExpression(spatial_seu, 
+                                assays = "RNA", 
+                                group.by = c("orig.ident"), # the cell type is the HiResNamed then the sampels which is the sample AND the solid/cystic
+                                return.seurat = FALSE, 
+                                verbose = T)
+cts <- round(as.matrix(cts$RNA))
+
+
+```
+
+
+```{r}
+# Create a sample information data frame
+sample_conditions <- data.frame(
+  row.names = colnames(cts),
+  condition = colnames(cts) # or assign specific group names if needed
+)
+
+#add metadata
+sex <- c(
+  SCT01 = "F",
+  SCT02 = "F",
+  SCT03 = "F",
+  SCT04edge = "F",
+  SCT04middle = "F",
+  SCT05 = "F",
+  SCT06 = "M",
+  SCT09 = "F",
+  SCT10 = "F"
+)
+solid_cystic <- c(
+  SCT01 = "cystic",
+  SCT02 = "solid",
+  SCT03 = "cystic",
+  SCT04edge = "solid",
+  SCT04middle = "solid",
+  SCT05 = "solid",
+  SCT06 = "solid",
+  SCT09 = "solid",
+  SCT10 = "cystic"
+)
+epith_RichPoor <- c(
+  SCT01 = "epithelia_poor",
+  SCT02 = "epithelia_rich",
+  SCT03 = "epithelia_poor",
+  SCT04edge = "epithelia_rich",
+  SCT04middle = "epithelia_rich",
+  SCT05 = "epithelia_rich",
+  SCT06 = "epithelia_rich",
+  SCT09 = "epithelia_poor",
+  SCT10 = "epithelia_rich"
+)
+
+sample_conditions <- sample_conditions %>%
+  mutate(
+    sex = sex[condition],
+    solid_cystic = solid_cystic[condition],
+    epith_RichPoor = epith_RichPoor[condition]
+  )
+
+# View the updated data frame
+print(sample_conditions)
+
+```
+
+
+```{r}
+##First I will keep only the HVG 
+cts <- as.data.frame(cts[rownames(cts) %in% var_genes, ])
+
+# Create DESeq2 dataset
+dds <- DESeqDataSetFromMatrix(countData = cts,
+                              colData = sample_conditions,
+                              design = ~ condition)
+dds <- dds[rowSums(counts(dds)) >= 10,]
+
+```
+
+```{r}
+# Perform rlog transformation with blind = TRUE
+rld_nucs <- rlog(dds, blind = TRUE)
+
+# Perform PCA
+pca <- prcomp(t(assay(rld_nucs)), scale. = TRUE, center = TRUE)
+
+# Prepare a dataframe for ggplot, including sample conditions
+pca_df <- as.data.frame(pca$x)
+pca_df <- cbind(pca_df, sample_conditions)
+
+# Calculate percentage of variance explained by each PC
+percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+# pdf(file = "figures/_______/PCAplot.pdf", width = 8, height = 6)
+# Plot the desired PCs (e.g., PC1 vs. PC2)
+ggplot(pca_df, aes(PC1, PC2, label = condition, shape = solid_cystic, color = epith_RichPoor)) +
+    geom_point(size = 6) +                                # Set point size
+    geom_text_repel(vjust = -1, size = 6) +               # Add condition labels
+    #geom_hline(yintercept = 0, linetype = "solid", color = "darkgrey", linewidth = 1) +  # Thicker vertical line at x = 0
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) + 
+    scale_color_manual(values = pal_epithrichpoor) +     # Apply custom color palette
+    #ggtitle("PCA: PC1 vs PC2") +                          # Update title for the PCs being plotted
+    theme_minimal() +                                     # Apply clean theme
+    theme(legend.position = "right")
+# dev.off()
+
+```
+
+
+
+```{r}
+# Load necessary libraries
+library(pheatmap)
+library(RColorBrewer)
+
+# Extract the rlog-transformed counts matrix
+rld_nucs_mat <- assay(rld_nucs)
+
+# Extract annotation data for solid_cystic, epith_RichPoor, and sex
+anno <- sample_conditions[,c("sex", "solid_cystic", "epith_RichPoor")]
+
+# Define colors for the annotation
+anno_colors <- list(
+  solid_cystic = pal_solidcystic,
+  epith_RichPoor = pal_epithrichpoor,
+  sex = c("F" = "pink", "M" = "lightblue")
+)
+
+
+# Compute Pearson correlation matrix for the heatmap
+rld_nucs_cor_pearson <- cor(rld_nucs_mat, method = "pearson")
+# Create a heatmap with annotations
+pheatmap(
+  rld_nucs_cor_pearson,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                   # Show row names for clarity
+  show_colnames = TRUE,                   # Show column names (samples)
+  main = "Pearson Correlation Heatmap"
+)
+# Calculate the Sample Distance Matrix and Correlation Matrices
+sampleDistMatrix <- as.matrix(dist(t(rld_nucs_mat)))  # Sample Distance Matrix
+# Create a heatmap with annotations
+pheatmap(
+  sampleDistMatrix,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                   # Show row names for clarity
+  show_colnames = TRUE,                   # Show column names (samples)
+  main = "Sample Distance Heatmap", color = colorRampPalette((brewer.pal(n = 7, name = "RdYlBu")))(100)
+)
+
+rld_nucs_cor_spearman <- cor(rld_nucs_mat, method = "spearman")  # Spearman Correlation Matrix
+# Create a heatmap with annotations
+pheatmap(
+  rld_nucs_cor_spearman,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                   # Show row names for clarity
+  show_colnames = TRUE,                   # Show column names (samples)
+  main = "Spearman Correlation Heatmap"
+)
+
+p1 = pheatmap(
+  rld_nucs_cor_spearman,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                  # Show row names for clarity
+  show_colnames = TRUE,                  # Show column names (samples)
+  display_numbers = TRUE,                # Show the correlation values in each cell
+  number_format = "%.2f",                # Format to display numbers (two decimal places)
+  number_color = "black",                # Color for the numbers
+  main = "Spearman Correlation Heatmap"
+)
+
+pdf("figures/20250528_SpatialSCT_Pseudobulk_CorrelationAndPCAplot/CorrelationPlot_SCT0405.pdf", width = 4, height = 14)
+print(p1)
+dev.off()
+
+```
+
+
+
+
+
+
+# Now we want to look at where our spatial lands in the PCA space from nucSamples
+```{r}
+# Step 1: Extract the raw RNA counts
+raw_counts <- GetAssayData(nucSamples, assay = "RNA", layer = "counts")
+# Step 2: Extract the metadata
+metadata <- obj@meta.data
+# Step 3: Create a new Seurat object with only the raw counts and metadata
+obj <- CreateSeuratObject(counts = raw_counts, meta.data = metadata)
+
+Idents(obj) <- "orig.ident"
+```
+
+```{r}
+# Set a seed for reproducibility
+set.seed(12345)  # You can change the number if you prefer a different seed
+
+# Define the number of cells (nuclei) you want to sample per sample
+target_nuclei <- 253  # For all samples except SCT04 and SCT05
+
+obj <- obj %>%
+  subset(cells = unlist(lapply(unique(obj$orig.ident), function(sample) {
+    sample_cells <- WhichCells(obj, idents = sample)
+    
+    if (length(sample_cells) > target_nuclei) {
+      sample(sample_cells, target_nuclei)
+    } else {
+      sample_cells  # If fewer cells than target, keep all
+    }
+  })))
+
+# Verify the downsampled Seurat object
+table(obj$orig.ident)  # Check the cell numbers per sample
+
+obj <- NormalizeData(obj) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA()
+var_genes_nuc <- VariableFeatures(object = obj)
+```
+
+```{r}
+cts_nucs <- AggregateExpression(obj, 
+                                assays = "RNA", 
+                                group.by = c("orig.ident"), # the cell type is the HiResNamed then the sampels which is the sample AND the solid/cystic
+                                return.seurat = FALSE, 
+                                verbose = T)
+cts_nucs <- round(as.matrix(cts_nucs$RNA))
+
+
+```
+
+```{r}
+# Create a sample information data frame
+sample_conditions_nucs <- data.frame(
+  row.names = colnames(cts_nucs),
+  condition = colnames(cts_nucs) # or assign specific group names if needed
+)
+
+#add metadata
+sex <- c(
+  SCT01 = "F",
+  SCT02 = "F",
+  SCT03 = "F",
+  #SCT04 = "F",
+  #SCT05 = "F",
+  SCT06 = "M",
+  SCT09 = "F",
+  SCT10 = "F"
+)
+solid_cystic <- c(
+  SCT01 = "cystic",
+  SCT02 = "solid",
+  SCT03 = "cystic",
+  #SCT04 = "solid",
+  #SCT05 = "solid",
+  SCT06 = "solid",
+  SCT09 = "solid",
+  SCT10 = "cystic"
+)
+epith_RichPoor <- c(
+  SCT01 = "epithelia_poor",
+  SCT02 = "epithelia_rich",
+  SCT03 = "epithelia_poor",
+  #SCT04 = "epithelia_rich",
+  #SCT05 = "epithelia_rich",
+  SCT06 = "epithelia_rich",
+  SCT09 = "epithelia_poor",
+  SCT10 = "epithelia_rich"
+)
+
+sample_conditions_nucs <- sample_conditions_nucs %>%
+  mutate(
+    sex = sex[condition],
+    solid_cystic = solid_cystic[condition],
+    epith_RichPoor = epith_RichPoor[condition]
+  )
+
+# View the updated data frame
+print(sample_conditions_nucs)
+
+```
+
+
+```{r}
+##First I will keep only the HVG 
+cts_nucs <- as.data.frame(cts_nucs[rownames(cts_nucs) %in% var_genes_nuc, ])
+
+# Create DESeq2 dataset
+dds_nucs <- DESeqDataSetFromMatrix(countData = cts_nucs,
+                              colData = sample_conditions_nucs,
+                              design = ~ condition)
+dds_nucs <- dds_nucs[rowSums(counts(dds_nucs)) >= 10,]
+
+
+```
+
+Run PCA with the rld_nucs since there are so few samples. Then run PCA with `prcomp` with it scaled and centered.
+
+```{r}
+# Perform rlog transformation with blind = TRUE
+rld_nucs <- rlog(dds_nucs, blind = TRUE)
+
+# Perform PCA
+pca_nucs <- prcomp(t(assay(rld_nucs)), scale. = TRUE, center = TRUE)
+
+# Prepare a dataframe for ggplot, including sample conditions
+pca_nucs_df <- as.data.frame(pca_nucs$x)
+pca_nucs_df <- cbind(pca_nucs_df, sample_conditions_nucs)
+
+# Calculate percentage of variance explained by each PC
+percentVar <- round(100 * pca_nucs$sdev^2 / sum(pca_nucs$sdev^2), 1)
+
+# Plot the desired PCs (e.g., PC1 vs. PC2)
+ggplot(pca_nucs_df, aes(PC1, PC2, label = condition, shape = solid_cystic, color = epith_RichPoor)) +
+    geom_point(size = 6) +                                # Set point size
+    geom_text_repel(vjust = -1, size = 6) +               # Add condition labels
+    #geom_hline(yintercept = 0, linetype = "solid", color = "darkgrey", linewidth = 1) +  # Thicker vertical line at x = 0
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) + 
+    scale_color_manual(values = pal_epithrichpoor) +     # Apply custom color palette
+    #ggtitle("PCA: PC1 vs PC2") +                          # Update title for the PCs being plotted
+    theme_minimal() +                                     # Apply clean theme
+    theme(legend.position = "right")
+
+
+```
+
+
+
+
+
+
+
+# Now let's plot the spatial onto the pseudobulk...
+
+```{r}
+cts <- AggregateExpression(spatial_seu, 
+                                assays = "RNA", 
+                                group.by = c("orig.ident"), # the cell type is the HiResNamed then the sampels which is the sample AND the solid/cystic
+                                return.seurat = FALSE, 
+                                verbose = T)
+cts <- round(as.matrix(cts$RNA))
+
+
+```
+
+
+
+```{r}
+# ------------------------------------------------------------------------------
+#                          OVERVIEW / PREAMBLE
+#   Goal: Project spatial pseudobulk samples onto an existing PCA built from
+#         snRNA‐seq pseudobulk, without recomputing the snRNA PCA.
+#
+#   Key objects required from your snRNA workflow:
+#     • pca_nucs       : the prcomp() object from your snRNA rlog data
+#     • rld_nucs       : the rlog‐transformed DESeq2 object used to build pca_nucs
+#     • percentVar     : numeric vector of % variance explained by each PC
+#     • var_genes_nuc  : character vector of HVGs (genes) used in the snRNA PCA
+#
+#   Additional inputs for the spatial side:
+#     • cts            : numeric matrix of spatial pseudobulk counts (genes × samples)
+#     • sample_conditions : data.frame of spatial sample metadata (rownames = sample names)
+# ------------------------------------------------------------------------------
+
+# 1) IDENTIFY THE GENE ORDER USED IN THE snRNA PCA
+#    --------------------------------------------------
+#    When you ran `pca_nucs <- prcomp(t(assay(rld_nucs)), ...)`, the rows of
+#    `assay(rld_nucs)` (i.e., rownames(rld_nucs)) were your HVGs, and those
+#    names became the “variables” (columns) of the PCA.  We need to extract
+#    that exact vector of gene names and lock in that order:
+genes_in_pca_nuc <- rownames(assay(rld_nucs))
+#    Now `genes_in_pca_nuc` holds the genes (in order) that pca_nucs expects.
+
+
+# 2) BUILD A SPATIAL COUNT MATRIX MATCHING THOSE GENES (FILL MISSING WITH 0)
+#    ------------------------------------------------------------------------
+#    - `cts` is your spatial pseudobulk matrix (rows = gene symbols, columns = sample IDs).
+#    - We will create `cts_spatial_sub`, a new matrix with:
+#         • rownames = genes_in_pca_nuc (in the same order)
+#         • columns = all spatial samples
+#         • counts for any gene missing from `cts` replaced with zeros
+#
+#    (a) Figure out which HVGs are actually present in the spatial counts:
+common_spatial_genes <- intersect(rownames(cts), genes_in_pca_nuc)
+if (length(common_spatial_genes) < length(genes_in_pca_nuc)) {
+  message(
+    "Warning: ",
+    length(genes_in_pca_nuc) - length(common_spatial_genes),
+    " gene(s) from the snRNA PCA are missing in the spatial counts."
+  )
+}
+
+#    (b) Create a zero‐filled matrix of dimension (length(genes_in_pca_nuc) × nSpatialSamples)
+genes_full   <- genes_in_pca_nuc
+spat_samples <- colnames(cts)
+cts_spatial_sub <- matrix(
+  0,
+  nrow = length(genes_full),
+  ncol = length(spat_samples),
+  dimnames = list(genes_full, spat_samples)
+)
+
+#    (c) Copy counts for genes that do appear in `cts` into the corresponding rows
+common_genes      <- common_spatial_genes
+cts_spatial_sub[common_genes, ] <- cts[common_genes, ]
+
+#    (d) Convert to a data.frame (DESeq2 can take a matrix directly, but this
+#        matches your previous style).  Row names remain the gene symbols.
+cts_spatial_sub <- as.data.frame(cts_spatial_sub)
+
+
+# 3) CONSTRUCT A DESEQ2 OBJECT FOR SPATIAL PSEUDOBULK (NO GENE‐FILTERING)
+#    ---------------------------------------------------------------------
+#    We do NOT filter out low‐count genes here.  Instead, we keep all HVGs
+#    (even if they were zero for some spatial samples), so that the rlog
+#    transformation preserves the same gene set/order used by pca_nucs.
+dds_spatial <- DESeqDataSetFromMatrix(
+  countData = cts_spatial_sub,
+  colData   = sample_conditions,
+  design    = ~ condition
+)
+#    Do NOT run `dds_spatial <- dds_spatial[rowSums(counts(dds_spatial)) >= 10, ]`
+#    because that would drop some of our HVGs.  We must keep the full HVG set.
+
+
+# 4) RUN RLOG ON THE FULL HVG SET TO MATCH snRNA TRANSFORMATION
+#    ------------------------------------------------------------
+#    We use `blind = TRUE` to ensure the transformation has no “treatment” bias.
+rld_spatial <- rlog(dds_spatial, blind = TRUE)
+
+
+# 5) EXTRACT THE RLOG MATRIX FOR SPATIAL, ENSURING SAME GENE ORDER
+#    -------------------------------------------------------------
+#    Because we built `cts_spatial_sub` with rows = genes_in_pca_nuc (in that order),
+#    `assay(rld_spatial)` will have the same rownames.  We simply pull that out:
+rld_mat_spatial <- assay(rld_spatial)[genes_in_pca_nuc, ]
+#    Now `rld_mat_spatial` is a (length(genes_in_pca_nuc)) × (nSpatialSamples) matrix,
+#    whose rownames exactly match the variables (genes) that pca_nucs expects.
+
+
+# 6) PREDICT PCA COORDINATES FOR SPATIAL SAMPLES
+#    -------------------------------------------
+#    The original PCA was run as: `pca_nucs <- prcomp(t(assay(rld_nucs)), scale.=TRUE, center=TRUE)`.
+#    To project new samples, we call predict(prcompObj, newdata = <transposed rlog matrix>):
+spatial_pca_scores <- predict(
+  pca_nucs,
+  newdata = t(rld_mat_spatial)
+)
+#    The result is a matrix (nSpatialSamples × nPCs), matching the PCA dimensions.
+
+
+# 7) ASSEMBLE A DATA FRAME FOR PLOTTING SPATIAL POINTS
+#    -------------------------------------------------
+#    We take the `spatial_pca_scores` matrix and cbind it with the spatial metadata
+#    so that ggplot can map aesthetics like `solid_cystic` and `epith_RichPoor`.
+spatial_pca_df <- as.data.frame(spatial_pca_scores)
+spatial_pca_df <- cbind(spatial_pca_df, sample_conditions)
+spatial_pca_df$dataset <- "spatial"   # tag so we know which points are spatial
+
+
+# 8) TAG SN RNA POINTS (OPTIONAL, FOR OVERLAY)
+#    -----------------------------------------
+#    If you'd like to overlay snRNA points and spatial points on the same plot,
+#    add a “dataset” column to your existing `pca_nucs_df` (which was built earlier):
+pca_nucs_df$dataset <- "snRNA"
+
+
+# 9) COMBINE snRNA AND SPATIAL DATA FRAMES FOR ONE PLOT (OPTIONAL)
+#    -------------------------------------------------------------
+combined_pca_df <- rbind(
+  pca_nucs_df[, c("PC1", "PC2", "condition", "solid_cystic", "epith_RichPoor", "dataset")],
+  spatial_pca_df[, c("PC1", "PC2", "condition", "solid_cystic", "epith_RichPoor", "dataset")]
+)
+
+
+# 10) PLOT PC1 vs. PC2, MAPPING SHAPE TO SOLID VS. CYSTIC
+#     ----------------------------------------------------
+#     • color = epith_RichPoor (your existing palette)
+#     • shape = solid_cystic  (solid vs. cystic)
+#     • snRNA points: slightly smaller, semi‐transparent
+#     • spatial points: slightly larger, full opacity
+#
+#     Note: Because both snRNA and spatial have a `solid_cystic` column in the metadata,
+#           we can unify their shape mapping.  To visually distinguish, we tweak point size/alpha.
+library(ggplot2)
+library(ggrepel)
+
+p1 = ggplot(combined_pca_df, aes(x = PC1, y = PC2)) +
+  # 10.1) snRNA points (circles), map shape to solid_cystic
+  geom_point(
+    data = combined_pca_df[combined_pca_df$dataset == "snRNA", ],
+    aes(color = epith_RichPoor, shape = solid_cystic),
+    size = 3, alpha = 0.6
+  ) +
+  # 10.2) spatial points (triangles), map shape to solid_cystic
+  geom_point(
+    data = combined_pca_df[combined_pca_df$dataset == "spatial", ],
+    aes(color = "black", shape = solid_cystic),
+    size = 5, stroke = 1.2
+  ) +
+  # 10.3) OPTIONAL: add labels for every sample (remove/comment out if too busy)
+  geom_text_repel(
+    data = combined_pca_df,
+    aes(label = condition),
+    size = 3,
+    vjust = 1.2
+  ) +
+  # 10.4) Axes labels showing % variance explained (from the snRNA PCA)
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  # 10.5) Color and shape scales
+  scale_color_manual(values = pal_epithrichpoor) +
+  scale_shape_manual(
+    values = c("cystic" = 16,   # filled circle
+               "solid"  = 17)   # filled triangle
+  ) +
+  # 10.6) Theme adjustments
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.title    = element_blank()
+  )
+
+pdf("figures/20250528_SpatialSCT_Pseudobulk_CorrelationAndPCAplot/CorrelationPlot_SCT0405.pdf", width = 8, height = 6)
+print(p1)
+dev.off()
+```
+
+```{r}
+# ------------------------------------------------------------------------------
+# Compute Euclidean distances (in PC‐space) between each spatial sample and each snRNA sample,
+# then identify, for each spatial sample, which snRNA sample is the closest.
+# We’ll demonstrate using PC1 and PC2; you can easily extend to more PCs by subsetting
+# the columns of snRNA_scores/spatial_scores accordingly.
+# ------------------------------------------------------------------------------
+
+# 1) Extract the PC‐score matrices (rows = samples, cols = PCs):
+snRNA_scores   <- pca_nucs$x          # (n_snRNA_samples × n_PCs)
+spatial_scores <- spatial_pca_scores  # (n_spatial_samples × n_PCs)
+
+# 2) Subset to the first two PCs (or pick whichever PCs you deem relevant):
+sn_mat <- snRNA_scores[, c("PC1", "PC2"), drop = FALSE]
+sp_mat <- spatial_scores[, c("PC1", "PC2"), drop = FALSE]
+
+# 3) Initialize an empty distance matrix: rows = spatial samples, cols = snRNA samples
+dist_mat <- matrix(
+  NA,
+  nrow = nrow(sp_mat),
+  ncol = nrow(sn_mat),
+  dimnames = list(rownames(sp_mat), rownames(sn_mat))
+)
+
+# 4) Fill in Euclidean distances between each pair (spatial sample → snRNA sample)
+for (i_sp in rownames(sp_mat)) {
+  for (j_sn in rownames(sn_mat)) {
+    dist_mat[i_sp, j_sn] <- sqrt(
+      sum((sp_mat[i_sp, ] - sn_mat[j_sn, ])^2)
+    )
+  }
+}
+
+# 5) For each spatial sample (each row), find the snRNA sample with minimum distance:
+closest_snRNA <- apply(dist_mat, 1, function(x) {
+  best_idx <- which.min(x)
+  c(
+    spatial_sample = names(x)[best_idx],   # this is the snRNA name, but we want the index
+    nearest_snRNA  = colnames(dist_mat)[best_idx],
+    distance       = x[best_idx]
+  )
+})
+closest_snRNA <- t(closest_snRNA)
+print(closest_snRNA)
+
+# 6) If you only want distances to a specific pair (e.g., SCT02 and SCT06), subset:
+dists_to_02_06 <- dist_mat[, c("SCT02", "SCT06"), drop = FALSE]
+print(dists_to_02_06)
+
+# 7) Compute the average distance of all spatial samples to SCT02 vs. SCT06:
+avg_dist_02 <- mean(dist_mat[, "SCT02"])
+avg_dist_06 <- mean(dist_mat[, "SCT06"])
+cat("Average Euclidean distance to SCT02:", round(avg_dist_02, 3), "\n")
+cat("Average Euclidean distance to SCT06:", round(avg_dist_06, 3), "\n")
+
+# 8) (Optional) Visualize the full distance matrix as a heatmap:
+pheatmap(
+  dist_mat,
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  main = "Euclidean distances: spatial vs. snRNA (PC1&PC2)"
+)
+
+```
+
+
+
+

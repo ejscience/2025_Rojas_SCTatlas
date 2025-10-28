@@ -1,0 +1,1132 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(scCustomize)
+library(ggprism)
+library(colorRamp2)
+library(tidyverse)
+library(ComplexHeatmap)
+library(ggpattern)
+
+get_legend <- function(my_plot) {
+  tmp <- ggplot_gtable(ggplot_build(my_plot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+```
+
+```{r}
+# Immune (Blue) shades
+Immune_shades <- c("#85C1E9", "#5DADE2", "#3498DB", "#2980B9", "#1F618D")
+
+# Neuroectoderm (Red) shades
+Neuroectoderm_shades <- c("#E57373", "#D64A4A", "#B53A3A", "#A83232", "#F5A09E")
+
+# Epithelia (Green) shades
+Epithelia_shades <- c("#A8E6A3", "#7CC47F", "#61B14B", "#88C992", "#4E9835", "#009A44", "#3CB371")
+
+# Stroma (Purple) shades
+Stroma_shades <- c("#D1A1DA", "#C882D5", "#A259C0", "#8E38A7", "#754C96", "#A67BB4", "#B46BB2", "#6B3583")
+
+# Endothelia (Orange) shades
+Endothelia_shades <- c("#F9A14B", "#F47D2D", "#D36E20", "#FFB14C", "#D37D00")
+
+# Combine all shades into one palette
+pal1 <- c(
+  Epithelia_shades,
+  Stroma_shades,
+  Endothelia_shades,
+  Immune_shades,
+  Neuroectoderm_shades
+)
+
+# Assign names to the colors
+names(pal1) <- c(
+  "BPIFB1+_epi",
+  "OCT4+_epi",
+  "LGR5+_epi",
+  "Epithelia_spare",
+  "cycl_epi",
+  "cilia_epi",  
+  "enterochromaffin", # Extra in case you need it
+
+  "fibroblast",
+  "COL12A1+_myofibro",
+  "sm_musc",
+  "chondrocyte",
+  "cycl_mesench",
+  "PAX7+_musc_MSC",
+  "sk_musc",
+  "Stroma_spare2",  # Extra in case you need it
+
+  "vasc_endo",
+  "vein_endo",
+  "lymph_endo",
+  "cycl_endo",
+  "Endothelia_spare",  # Extra in case you need it
+
+  "mac",
+  "infl_mac",
+  "t_cell",
+  "mast",
+  "nkt",
+
+  "GFAP+_astro_radGlia",
+  "neuro",
+  "oligo",
+  "CUX2+_cilia_astro_radGlia",
+  "Ecto_spare"
+)
+
+# Check the final palette
+pal1
+
+
+pal_broad <- c("Stroma" =  "#9467bd", "Epithelia" = "#2ca02c", "Endothelia" = "#ff7f0e", "Neuroectoderm" = "#d62728", "Immune" = "#1f77b4")
+
+```
+
+
+```{r}
+# Get the samplees in #####
+nucSamples <- readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+
+metadata <- readRDS(file = "data/20240702_HiResMarkersForNucSamples/HiResNamedMetadata.rds")
+
+nucSamples@meta.data = metadata
+rm(metadata)
+```
+
+I needed to fix all the metadata stuff...
+
+```{r}
+#Fixing SCT01n to be SCT01
+table(nucSamples$orig.ident)
+Idents(nucSamples) <- "orig.ident"
+nucSamples <- RenameIdents(nucSamples, "SCT01n" = "SCT01")
+nucSamples@meta.data$orig.ident <- Idents(nucSamples)
+table(nucSamples$orig.ident)
+#re-order them 
+levels(nucSamples@meta.data$orig.ident)
+new_order = c("SCT02", "SCT06", "SCT09", "SCT01", "SCT03",  "SCT10")
+nucSamples@meta.data$orig.ident <- factor(nucSamples@meta.data$orig.ident, levels = new_order)
+levels(nucSamples@meta.data$orig.ident)
+
+#fix it in the sample list too
+nucSamples$sample <- nucSamples$orig.ident
+
+#Fixing chromaffinPos to be epitheliaRichPoor
+table(nucSamples$chromaffinpos)
+Idents(nucSamples) <- "chromaffinpos"
+nucSamples <- RenameIdents(nucSamples, "ChromaffinPositive" = "EpitheliaRich", "ChromaffinNegative" = "EpitheliaPoor")
+nucSamples@meta.data$chromaffinpos <- Idents(nucSamples)
+table(nucSamples$chromaffinpos)
+nucSamples$EpitheliaRichPoor <- nucSamples$chromaffinpos
+nucSamples$chromaffinpos <- NULL
+
+# Change the name of neutro to infl_mac
+Idents(nucSamples) <- "HiResNamed"
+nucSamples <- RenameIdents(nucSamples, "neutro" = "infl_mac")
+nucSamples@meta.data$HiResNamed <- Idents(nucSamples)
+
+#FixHiResNamedOrdered
+Idents(nucSamples) <- "HiResNamed"
+nucSamples$HiResNamedOrdered = NULL
+nucSamples$HiResNamedOrdered <- factor(nucSamples$HiResNamed, levels = c(
+    # Ectoderm
+    "GFAP+_astro_radGlia",
+    "CUX2+_cilia_astro_radGlia",
+    "neuro",
+    "oligo",
+    # Endoderm
+    "enterochromaffin",
+    "BPIFB1+_epi",
+    "OCT4+_epi",
+    "LGR5+_epi",
+    "cilia_epi",
+    "cycl_epi",
+    
+    # Mesoderm
+    "fibroblast",
+    "COL12A1+_myofibro",
+    "PAX7+_musc_MSC",
+    "cycl_mesench",
+    "chondrocyte",
+    "sm_musc",
+    "sk_musc",
+    "vasc_endo",
+    "vein_endo",
+    "lymph_endo",
+    "cycl_endo",
+    "mac",
+    "infl_mac",
+    "t_cell",
+    "nkt",
+    "mast"
+  )
+)
+
+#Remove the redundant/unnecessary columns
+columns_to_remove <- c(grep(pattern = "RNA_snn_res", colnames(nucSamples@meta.data),value = T), grep(pattern = "clusters", colnames(nucSamples@meta.data),value = T))
+for (column in columns_to_remove) {
+  nucSamples@meta.data[[column]] <- NULL
+  }
+
+rm(new_order ,columns_to_remove)
+
+Idents(nucSamples) <- "HiResNamedOrdered"
+
+
+#Fix the enterochromaffin to be Epithelia
+nucSamples$BroadCategory[nucSamples$HiResNamed == "enterochromaffin"] <- "Epithelia"
+
+
+```
+
+
+```{r}
+DimPlot_scCustom(
+  nucSamples, 
+  reduction = "umap.harmony", 
+  group.by = "HiResNamedOrdered",
+  label = F, label.box = TRUE, repel = TRUE, colors_use = pal1
+)
+
+
+x <- DimPlot_scCustom(
+  nucSamples, 
+  reduction = "umap.harmony", 
+  group.by = "HiResNamedOrdered", colors_use = pal1
+) + guides(color = guide_legend(override.aes = list(size=8), ncol=1)) + NoAxes()
+
+pdf(file = "figures/20250331_Figure1_NewObjectHere/UMAP_clustered.pdf", width = 10.4, height = 9)
+LabelClusters(x, id = "HiResNamedOrdered", repel = T,  box.padding = 2) + NoLegend() 
+dev.off()
+
+
+# GET THE LEGEND
+legend <- get_legend(x)
+# Print just the legend
+cowplot::plot_grid(legend, ncol = 1)
+```
+
+```{r}
+# Create numeric cluster labels based on the current order of HiResNamedOrdered
+nucSamples$ClusterNum <- factor(nucSamples$HiResNamedOrdered,
+  levels = levels(nucSamples@meta.data$HiResNamedOrdered),
+  labels = as.character(1:(length(levels(nucSamples@meta.data$HiResNamedOrdered))))
+)
+
+# Get original cluster names and corresponding new numeric labels
+orig <- levels(nucSamples@meta.data$HiResNamedOrdered)
+num  <- as.character(1:(length(orig)))
+
+# Remap your palette (pal1) so that its names match the new numeric labels.
+# We assume that the order of orig matches the order of colors in pal1.
+pal_num <- setNames(pal1[match(orig, names(pal1))], num)
+
+# Create a simple legend mapping (e.g., "0: BPIFB1+_epi")
+legend_map <- paste0(num, ": ", orig)
+
+# Make the UMAP plot using ClusterNum and override the legend labels
+x <- DimPlot_scCustom(nucSamples,
+  reduction = "umap.harmony",
+  group.by = "ClusterNum",
+  colors_use = pal_num
+) +
+  scale_color_manual(values = pal_num, labels = legend_map) +
+  guides(color = guide_legend(override.aes = list(size = 8), ncol = 1)) +
+  NoAxes() + ggtitle(NULL)
+
+# Save the plot with numeric labels on clusters
+pdf("figures/20250331_Figure1_NewObjectHere/UMAP_clustered.pdf", width = 10.4, height = 9)
+LabelClusters(x, id = "ClusterNum", repel = TRUE, box.padding = 2, box = T, size = 12, colour = "white") + NoLegend()
+dev.off()
+
+pdf("figures/20250331_Figure1_NewObjectHere/UMAP_Legend.pdf", height = 11, width = 8)
+# Extract and display the legend (shows mapping "0: original_cluster")
+legend <- get_legend(x)
+cowplot::plot_grid(legend, ncol = 1)
+dev.off()
+
+```
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+dp <- data.frame(group = nucSamples$orig.ident, annotation = nucSamples$HiResNamed)
+
+dp$annotation = factor(dp$annotation, levels = 
+  c(
+    # Ectoderm
+    "GFAP+_astro_radGlia",
+    "CUX2+_cilia_astro_radGlia",
+    "neuro",
+    "oligo",
+    
+    
+    # Endoderm
+    "enterochromaffin",
+    "BPIFB1+_epi",
+    "OCT4+_epi",
+    "LGR5+_epi",
+    "cilia_epi",
+    "cycl_epi",
+    
+    # Mesoderm
+    "fibroblast",
+    "COL12A1+_myofibro",
+    "PAX7+_musc_MSC",
+    "cycl_mesench",
+    "chondrocyte",
+    "sm_musc",
+    "sk_musc",
+    "vasc_endo",
+    "vein_endo",
+    "lymph_endo",
+    "cycl_endo",
+    "mac",
+    "infl_mac",
+    "t_cell",
+    "nkt",
+    "mast"
+  )
+)
+df <- dp %>%
+  group_by(annotation, group) %>%
+  summarise(
+    per_anno = n()) %>% data.frame()
+
+df$percent <- 0
+for (i in seq_along(1:nrow(df))){
+    sgnum <- colSums(as.matrix(df[df$group == df[i,"group"],"per_anno"]))
+    df$percent[i] <- df$per_anno[i] / sgnum
+}
+
+#pal1_filtered <- pal1[!grepl("spare", names(pal1))]
+
+p2 <- ggplot(data = df, mapping = aes(
+  x = `group`, fill = `annotation`, y = `percent`))
+p2 <- p2 + geom_col() + theme_classic()+ 
+  scale_fill_manual(values=pal1) +
+  theme(axis.text.x = element_text(colour = "black", size = rel(1),angle = 45,hjust = 0.8,vjust = 0.8)) +
+  theme(axis.text.y = element_text(colour = "black", size = rel(1))) +
+  labs(x = "SCT samples", y = "Proportion of sub-category cell ID")  # Add axis titles
+
+options(repr.plot.width=6, repr.plot.height=4)
+pdf(file = "figures/20250331_Figure1_NewObjectHere/BoxPlot_subcat.pdf", width = 3, height = 3.3)
+print(p2 + NoLegend())
+dev.off()
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+dp <- data.frame(group = nucSamples$orig.ident, annotation = nucSamples$BroadCategory)
+
+dp$annotation = factor(dp$annotation, levels = 
+  c("Neuroectoderm", "Epithelia","Stroma" ,  "Endothelia" ,"Immune")
+)
+df <- dp %>%
+  group_by(annotation, group) %>%
+  summarise(
+    per_anno = n()) %>% data.frame()
+
+df$percent <- 0
+for (i in seq_along(1:nrow(df))){
+    sgnum <- colSums(as.matrix(df[df$group == df[i,"group"],"per_anno"]))
+    df$percent[i] <- df$per_anno[i] / sgnum
+}
+
+#pal1_filtered <- pal1[!grepl("spare", names(pal1))]
+
+p2 <- ggplot(data = df, mapping = aes(
+  x = `group`, fill = `annotation`, y = `percent`))
+p2 <- p2 + geom_col() + theme_classic()+ 
+  scale_fill_manual(values=pal_broad) + 
+  theme(axis.text.x = element_text(colour = "black", size = rel(1),angle = 45,hjust = 0.8,vjust = 0.8)) +
+  theme(axis.text.y = element_text(colour = "black", size = rel(1))) +
+  labs(x = "SCT samples", y = "Proportion of broad category in SCTs")  # Add axis titles
+
+options(repr.plot.width=6, repr.plot.height=4)
+pdf(file = "figures/20250331_Figure1_NewObjectHere/BoxPlot_broad.pdf", width = 3, height = 3.3)
+print(p2 + NoLegend())
+dev.off()
+
+
+pdf("figures/20250331_Figure1_NewObjectHere/BoxPlot_broad_Legend.pdf", height = 11, width = 8)
+# Extract and display the legend (shows mapping "0: original_cluster")
+legend <- get_legend(
+  p2
+  )
+cowplot::plot_grid(legend, ncol = 1)
+dev.off()
+
+```
+
+
+
+
+
+```{r}
+markers_for_subtypes <- list(
+  radial_glia = c("SOX2", "PAX6"),
+  GFAP_plus_astro_radGlia = c("GFAP"),
+  CUX2_plus_cilia_astro_radGlia = c("CUX2"),
+
+  neuro = c("RBFOX3"),
+  oligo = c("OLIG2", "SOX10"),
+
+  ALL_EPI = c("EPCAM", "ELF3"),
+  enterochromaffin = c("CHGA"),
+  BPIFB1_plus_epi = c("BPIFB1"),
+  OCT4_plus_epi = c("POU5F1"),
+  LGR5_plus_epi = c("LGR5"),
+  cilia_epi = c("DNAAF1"),
+  cycl_epi = c(),
+  
+  ALL_STROMA = c("COL14A1", "POSTN"),
+  fibroblast = c(),
+  COL12A1_plus_myofibro = c("COL12A1"),
+  PAX7_plus_musc_MSC = c("PAX7"),
+  cycl_mesench = c(),
+  chondrocyte = c("COMP"),
+  sm_musc = c("NOTCH3", "ACTA2"),
+  sk_musc = c("DES", "MLIP"),
+  
+  vasc_endo = c("PECAM1", "VWF", "CDH5"),
+  artery_endon = c(),
+  vein_endo = c("ACKR1"),
+  lymph_endo = c("PROX1"),
+  cycl_endo = c(),
+
+  mac = c("CD163", "CD68"),
+  infl_mac = c("AIF1"),
+  t_cell = c("CD3D"), 
+  nkt = c("KLRB1", "NCAM1"),
+  mast = c("KIT"), 
+  
+  ALL_Cycling = c("MKI67")
+)
+
+all_markers_for_subtypes <- unique(unlist(markers_for_subtypes))
+
+pdf(file = "figures/20250331_Figure1_NewObjectHere/DotPlot.pdf", width = 12, height = 13)
+DotPlot_scCustom(nucSamples,group.by = "HiResNamedOrdered", features = all_markers_for_subtypes, x_lab_rotate = T, flip_axes = F) +
+  labs(x = "Marker Genes", y = "Sub-category cell IDs") + NoLegend() # Add axis titles 
+dev.off()
+
+pdf("figures/20250331_Figure1_NewObjectHere/DotPlot_Legend.pdf", height = 11, width = 8)
+# Extract and display the legend (shows mapping "0: original_cluster")
+legend <- get_legend(DotPlot_scCustom(nucSamples,group.by = "HiResNamedOrdered", features = all_markers_for_subtypes, x_lab_rotate = T, flip_axes = F) +
+  labs(x = "Marker Genes", y = "Sub-category cell IDs")  # Add axis titles 
+  )
+cowplot::plot_grid(legend, ncol = 1)
+dev.off()
+
+```
+
+
+```{r}
+
+Idents(nucSamples) <- "HiResNamed"
+nucSamples <- RenameIdents(object = nucSamples, 
+                      'fibroblast' = "mesoderm",
+                      'BPIFB1+_epi' = "endoderm",
+                      'COL12A1+_myofibro' = "mesoderm",
+                      'vasc_endo' = "mesoderm",
+                      'OCT4+_epi' = "endoderm",
+                      'GFAP+_astro_radGlia' = "ectoderm",
+                      'vein_endo' = "mesoderm",
+                      'sm_musc' = "mesoderm",
+                      'mac' = "mesoderm",
+                      'LGR5+_epi' = "endoderm",
+                      'cilia_epi' = "endoderm",
+                      'chondrocyte' = "mesoderm",
+                      'cycl_mesench' = "mesoderm",
+                      'neuro' = "ectoderm",
+                      'oligo' = "ectoderm",
+                      'enterochromaffin' = "endoderm",
+                      'CUX2+_cilia_astro_radGlia' = "ectoderm",
+                      'cycl_epi' = "endoderm",
+                      'PAX7+_musc_MSC' = "mesoderm",
+                      'lymph_endo' = "mesoderm",
+                      't_cell' = "mesoderm",
+                      'infl_mac' = "mesoderm",
+                      'mast' = "mesoderm",
+                      'cycl_endo' = "mesoderm",
+                      'nkt' = "mesoderm",
+                      'sk_musc' = "mesoderm")
+
+
+# Apply the new broad categories
+nucSamples$GermLayer <- Idents(nucSamples)
+
+```
+
+
+```{r}
+pal_broad <- c("#000000", "#4D4D4D", "#A9A9A9")
+names(pal_broad) <- c("ectoderm", "endoderm", "mesoderm")
+
+library(dplyr)
+library(ggplot2)
+dp <- data.frame(group = nucSamples$orig.ident, annotation = nucSamples$GermLayer)
+
+dp$annotation = factor(dp$annotation, levels = 
+  c("ectoderm", "endoderm", "mesoderm")
+)
+df <- dp %>%
+  group_by(annotation, group) %>%
+  summarise(
+    per_anno = n()) %>% data.frame()
+
+df$percent <- 0
+for (i in seq_along(1:nrow(df))){
+    sgnum <- colSums(as.matrix(df[df$group == df[i,"group"],"per_anno"]))
+    df$percent[i] <- df$per_anno[i] / sgnum
+}
+
+# p2 <- ggplot(data = df, mapping = aes(
+#   x = `group`, fill = `annotation`, y = `percent`))
+# p2 <- p2 + geom_col() + theme_classic()+ 
+#   scale_fill_manual(values=pal_broad) + 
+#   theme(axis.title = element_blank()) +
+#   theme(axis.text.x = element_text(colour = "black", size = rel(2),angle = 45,hjust = 0.8,vjust = 0.8)) +
+#   theme(axis.text.y = element_text(colour = "black", size = rel(2))) 
+# 
+# options(repr.plot.width=6, repr.plot.height=4)
+# p2
+
+p2 <- ggplot(data = df, mapping = aes(x = `group`, fill = `annotation`, y = `percent`)) +
+      geom_col() +
+      geom_text(aes(label = round(percent, 2)), position = position_stack(vjust = 0.5), size = 1.1, color = "white") +
+      theme_classic() +
+      guides(fill = guide_legend(title = "Germ Layer")) +
+      scale_fill_manual(values = pal_broad) +
+      theme(axis.text.x = element_text(colour = "black", size = rel(1), angle = 45, hjust = 0.8, vjust = 0.8)) +
+      theme(axis.text.y = element_text(colour = "black", size = rel(1))) +
+      labs(x = "SCT samples", y = "Proportion of germ layer in each SCT")
+options(repr.plot.width = 6, repr.plot.height = 4)
+
+
+pdf(file = "figures/20250331_Figure1_NewObjectHere/BoxPlot_germlayer.pdf", width = 3, height = 3.3)
+print(p2)
+dev.off()
+
+pdf(file = "figures/20250331_Figure1_NewObjectHere/BoxPlot_germlayer.pdf", width = 3, height = 3.3)
+print(p2)
+dev.off()
+
+```
+
+
+
+```{r}
+metadata <- nucSamples@meta.data
+saveRDS(metadata, file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+```
+
+
+### Teratoma Bias score
+```{r}
+
+############################################
+## Teratoma Cell Type Stacked Barplot and Bias Plot
+############################################
+
+# Load required libraries
+library(Seurat)
+library(swne)
+library(perturbLM)
+library(ggplot2)
+library(entropy)
+library(cowplot)
+library(reshape2)
+
+# Define cell type and teratoma assignments from your data
+clusters <- nucSamples@meta.data$HiResNamedOrdered
+names(clusters) <- rownames(nucSamples@meta.data)  # assuming cell barcodes are rownames
+
+ter.id <- nucSamples@meta.data$orig.ident
+names(ter.id) <- rownames(nucSamples@meta.data)
+
+# Convert the named vectors to lists grouping cells by cell type and by teratoma.
+# (If you need to subset to a specific cell line, assign these lists accordingly.)
+clusters.list <- UnflattenGroups(clusters)
+ter.id.list <- UnflattenGroups(ter.id)
+
+# Compute overlap counts: rows are cell types, columns are teratomas
+ter.cluster.counts <- GroupOverlapCounts(clusters.list, ter.id.list)
+
+# Calculate the fraction of cells per teratoma for each cell type
+ter.cluster.frac <- t(ter.cluster.counts) / colSums(ter.cluster.counts)
+ter.cluster.frac <- t(t(ter.cluster.frac) / colSums(ter.cluster.frac))
+ter.counts <- colSums(ter.cluster.counts)
+
+# Compute bias for each cell type:
+# Bias_k = KL.empirical( X_k, overall ) * (total cells in cell type k)
+cluster.div <- apply(ter.cluster.counts, 1, function(x) {
+  KL.empirical(x, colSums(ter.cluster.counts)) * sum(x)
+})
+cluster.div <- sort(cluster.div)
+
+# Create the bias (KL divergence) barplot using ggBarplot:
+cluster.div.bar <- ggBarplot(cluster.div, fill.color = "lightgrey") +
+  coord_flip() +
+  theme(axis.text.y = element_blank())
+
+# Reorder the fraction matrix to match the sorted bias values
+ter.cluster.frac <- ter.cluster.frac[, names(cluster.div)]
+
+# Reshape the fraction matrix for ggplot2
+ter.cluster.df <- setNames(melt(ter.cluster.frac), c("Teratoma", "Cluster", "Frac"))
+
+# --- New code to add cell counts to cluster names ---
+# Compute total cell counts per cell type (cluster)
+cell_counts <- rowSums(ter.cluster.counts)
+# Get the current factor levels for Cluster
+old_levels <- levels(ter.cluster.df$Cluster)
+# Create new labels: "CellType (Count)"
+new_levels <- paste0(old_levels, " (", cell_counts[old_levels], ")")
+# Update the factor levels in the Cluster column
+levels(ter.cluster.df$Cluster) <- new_levels
+# --- End new code ---
+
+# Create the stacked barplot of cell type fractions across teratomas
+stacked.bar <- ggplot(ter.cluster.df) +
+  geom_bar(aes(x = Cluster, y = Frac, fill = Teratoma), stat = "identity", 
+           width = 0.75, color = "black") + 
+  theme_classic() +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(hjust = 1, size = 14, angle = 90, color = "black"),
+        axis.text.y = element_text(size = 16, color = "black")) + 
+  scale_fill_brewer(palette = "Set2") +
+  coord_flip()
+
+# Arrange the stacked barplot and the bias barplot side-by-side
+pdf("figures/20250331_Figure1_NewObjectHere/dm-ter-human-merged_cluster_teratoma_barplot.pdf", height = 7, width = 8)
+plot_grid(stacked.bar + theme(legend.position = "none"), cluster.div.bar, 
+          align = "h", rel_widths = c(0.65, 0.35))
+dev.off()
+
+# Extract and save the legend separately
+legend <- get_legend(stacked.bar)
+pdf("figures/20250331_Figure1_NewObjectHere/dm-ter-human-merged_cluster_teratoma_barplot_legend.pdf", height = 7.5, width = 2.5)
+ggdraw(legend)
+dev.off()
+
+# Save results (optional)
+
+
+```
+
+
+
+
+# Supplemental Figure 1
+
+```{r}
+allSamples = readRDS(file = "data/20240524_Integrations_NucANDall/allSamples_Harmony_MixedCellIDs.rds")
+Idents(allSamples) = allSamples$orig.ident
+allSamples = RenameIdents(allSamples, "SCT01" = "SCT01c")
+allSamples$orig.ident = Idents(allSamples)
+allSamples@meta.data$orig.ident <- factor(allSamples@meta.data$orig.ident, levels = c("SCT01c", "SCT01n", "SCT03", "SCT09", "SCT02", "SCT06", "SCT10"))
+metadata = allSamples@meta.data
+
+pdf(file = "figures/20250331_Figure1_NewObjectHere/Cells.pdf", width = 5, height = 3)
+metadata %>% 
+  	ggplot(aes(x=orig.ident, fill=orig.ident)) + 
+  	geom_bar() +
+  	theme_classic() +
+  	theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  	theme(plot.title = element_text(hjust=0.5, face="bold")) +
+  	ggtitle("Number of Cells per sample")
+dev.off()
+```
+
+```{r}
+pdf(file = "figures/20250331_Figure1_NewObjectHere/MixedClusters.pdf", width = 14, height = 5)
+DimPlot_scCustom(
+  nucSamples, 
+  reduction = "umap.harmony", 
+  group.by = "NamedMixedClusters",
+  split.by = "orig.ident",
+  label = T, label.box = F, repel = TRUE, split_seurat = T, num_columns = 6
+) & NoLegend() & ggtitle(NULL)
+dev.off()
+```
+
+
+
+
+```{r}
+source("../../rojas/functions/Ryans_Functions.R")
+OvTe_raw <- readRDS(file = '/mnt/DATA/LairdLab/ernesto/data/scrna/cao2023/GSE229343_seurat_for_geo.Rds')
+cd.ter <- readRDS("/mnt/DATA/LairdLab/rojas/Teratomas_McDonald2020-Yu2023_iPSC-Ovarian/data/dm-ter-human-merged_clustering_v3.seurat.Robj")
+#read in the meta data that was published
+publ.maps <- read.delim("/mnt/DATA/LairdLab/rojas/Teratomas_McDonald2020-Yu2023_iPSC-Ovarian/data/dm-ter-human-merged_metadata.tsv", row.names = 1)
+
+#now add the metadata from the published mapping to the cell derived teratoma 
+cd.ter <- AddMetaData(cd.ter, metadata = publ.maps)
+
+#link between the cluster names and the germ layer
+layer.maps <- c("MSC/Fib"="Mesoderm", 
+                   "MyoFib"="Mesoderm", 
+                   "Cycling MSC/Fib"="Mesoderm", 
+                   "Retinal Epi"="Ectoderm", 
+                   "Adipogenic MSC/Fib"="Mesoderm", 
+                   "Early Neurons"="Ectoderm", 
+                   "Radial Glia"="Ectoderm", 
+                   "Mid/Hindgut Epi"="Endoderm", 
+                   "Muscle Prog"="Mesoderm", 
+                   "Pericytes"="Mesoderm",
+                   "CycProg"="Ectoderm",
+                   "Chondrogenic MSC/Fib"="Mesoderm", 
+                   "Foregut Epi"="Endoderm",
+                   "Smooth Muscle"="Mesoderm", 
+                   "Cardiac/Skeletal Muscle"="Mesoderm", 
+                   "Immune"="Mesoderm", 
+                   "Retinal Neurons"="Ectoderm", 
+                   "Schwann Cells"="Ectoderm", 
+                   "Melanoblasts"="Ectoderm", 
+                   "Kidney Prog"="Mesoderm", 
+                   "HSC"="Mesoderm", 
+                   "Airway Epi"="Endoderm",
+                   "Erythrocyte"="Mesoderm")
+#add the germ layer metadata
+cd.ter@meta.data$germ_layer <- layer.maps[cd.ter$cluster]
+rm(publ.maps, layer.maps)
+
+y_axis_order_OvTe <- c(
+  "Radial Glia",                 # Matches "Radial_Glia"
+  "meningeal fibroblast",        # Matches "meningeal_fibroblast"
+  "immature neuron",             # Matches "immature_neuron"
+  "schwann cells",               # Matches "schwann_cells"
+  "pDC",                         # Matches "pDC"
+  "epithelial",                  # Matches "epithelial"
+  "Foregut Epi",                 # Matches "Foregut_Epi"
+  "Mid/Hindgut Epi",             # Matches "Mid_Hindgut_Epi"
+  "Airway Epi/ciliated cells",   # Matches "Airway_Epi_ciliated_cells"
+  "Retinal Epi/ciliated cells",  # Matches "Retinal_Epi_ciliated_cells"
+  "embryonic stem cell",         # Matches "embryonic_stem_cell"
+  "stem cell like",              # Matches "stem_cell_like"
+  "Chondrogenic MSC/Fibro",      # Matches "Chondrogenic_MSC_Fibro"
+  "MSC/Fib",                     # Matches "MSC_Fib"
+  "Adipogenic MSC/Fib",          # Matches "Adipogenic_MSC_Fib"
+  "cardiomyocyte/myoFib",        # Matches "cardiomyocyte_myoFib"
+  "adipocyte",                   # Matches "adipocyte"
+  "myogenic progenitor cells",   # Matches "myogenic_progenitor_cells"
+  "pericytes",                   # Matches "pericytes"
+  "smooth muscle cells",         # Matches "smooth_muscle_cells"
+  "endothelial",                 # Matches "endothelial"
+  "Lymphatics endothelial cells",# Matches "Lymphatics_endothelial_cells"
+  "Myeloid",                     # Matches "Myeloid"
+  "Neutrophils",                 # Matches "Neutrophils"
+  "B cells",                     # Matches "B_cells"
+  "T cells",                     # Matches "T_cells"
+  "NKT cells",                    # Matches "NKT_cells",
+  "Cycling Neural Prog/MSC"
+)
+
+
+
+y_axis_order_cdTer <- c(
+  "Radial Glia",
+  "Early Neurons",
+  "Retinal Neurons",
+  "Schwann Cells",
+  "Chondrogenic MSC/Fib",
+  "Kidney Prog",
+  "Foregut Epi",
+  "Mid/Hindgut Epi",
+  "Retinal Epi",
+  "Airway Epi",
+  "MyoFib",
+  "Adipogenic MSC/Fib",
+  "MSC/Fib",
+  "Smooth Muscle",
+  "Cardiac/Skeletal Muscle",
+  "Muscle Prog",
+  "HSC",
+  "Pericytes",
+  "Melanoblasts",
+  "Erythrocyte",
+  "Immune",
+  "Cycling MSC/Fib",
+  "Cycling Neural Prog/MSC"
+)
+
+
+OvTe_raw$annotation <- factor(x =OvTe_raw$annotation, levels = y_axis_order_OvTe)
+
+cd.ter$cluster <- factor(cd.ter$cluster, levels = y_axis_order_cdTer)
+
+# pdf(file = "figures/20250331_Figure1_NewObjectHere/ModuleScoreHiResNamed.pdf", width = 9)
+# # Run cluster.signature.scoring for OvTe_raw
+# cluster.signature.scoring(nucSamples, OvTe_raw, query.grouping = "HiResNamedOrdered", reference.grouping = "annotation", cluster.cols = F, cluster.rows = TRUE)
+# # Run cluster.signature.scoring for cd.ter
+# cluster.signature.scoring(nucSamples, cd.ter, query.grouping = "HiResNamedOrdered", reference.grouping = "cluster", cluster.cols = F, cluster.rows = TRUE)
+# dev.off()
+
+pdf(file = "figures/20250331_Figure1_NewObjectHere/ModuleScoreHiResNamed2.pdf", width = 9)
+# Run cluster.signature.scoring for OvTe_raw
+cluster.signature.scoring(nucSamples, OvTe_raw, query.grouping = "HiResNamedOrdered", reference.grouping = "annotation", cluster.cols = F, cluster.rows = F)
+# Run cluster.signature.scoring for cd.ter
+cluster.signature.scoring(nucSamples, cd.ter, query.grouping = "HiResNamedOrdered", reference.grouping = "cluster", cluster.cols = F, cluster.rows = F)
+dev.off()
+
+rm(OvTe_raw, cd.ter)
+```
+
+
+## Integration of SCT01 cells and nuclei
+```{r}
+allSamplesList <- readRDS(file = "data/20240522_SplitSCT_CheckingCellTypes/samples_list_Split_Named_metadataClean.rds")
+
+metadata <- readRDS(file = "data/20240522_SplitSCT_CheckingCellTypes/MetaDataForAllClusters.rds")
+
+```
+
+
+
+```{r}
+markers_for_subtypes <- list(
+  GFAP_plus_astro_radGlia = c("GFAP"),
+  CUX2_plus_cilia_astro_radGlia = c("CUX2", "PCDH11X"),
+  neuro = c("GAD2", "SRRM3", "MYT1L", "MIAT", "CACNA1B"),
+  oligo = c("OLIG1", "OLIG2"),
+  enterochromaffin = c("CHGA"),
+
+  ALL_EPI = c("EPCAM", "ELF3"),
+  BPIFB1_plus_epi = c("BPIFB1"),
+  OCT4_plus_epi = c("POU5F1"),
+  LGR5_plus_epi = c("LGR5"),
+  cilia_epi = c("DNAAF1", "DNAH3"),
+  cycl_epi = c(),
+  
+  ALL_STROMA = c("COL14A1", "POSTN"),
+  fibroblast = c(),
+  COL12A1_plus_myofibro = c("COL12A1"),
+  PAX7_plus_musc_MSC = c("PAX7"),
+  cycl_mesench = c(),
+  chondrocyte = c("CHI3L1", "COMP"),
+  sm_musc = c("NOTCH3", "ACTA2"),
+  sk_musc = c("ASB5", "DES", "NCAM1"),
+  
+  vasc_endo = c("PECAM1", "VWF", "CDH5"),
+  artery_endon = c(),
+  vein_endo = c("ACKR1", "SELP"),
+  lymph_endo = c("TBX1", "PROX1"),
+  cycl_endo = c(),
+
+  mac = c("PTPRC", "MSR1",  "CD163"), #removed "CD86",
+  t_cell = c("IL2RG", "CD3E"), #removed "CD7", "NKG7",
+  nkt = c("CD247", "CD96"),
+  infl_mac = c("AIF1", "ITGB2"), # removed"MNDA", "FGL2", "S100A9"
+  mast = c("CHAT", "GCSAML" ), #removed "MS4A2", "CPA3"
+  
+  ALL_Cycling = c("MKI67")
+)
+
+all_markers_for_subtypes <- unique(unlist(markers_for_subtypes))
+```
+
+```{r}
+DimPlot_scCustom(allSamplesList$SCT01, reduction = 'umap', group.by = 'finalname')
+DotPlot_scCustom(allSamplesList$SCT01,group.by = "finalname", features = all_markers_for_subtypes, x_lab_rotate = T, flip_axes = F)
+# we have astrocytes as the neural prog. 
+# SCT01Cl7 is chondro
+
+
+```
+
+# Full samples
+
+```{r}
+SCT01merge <- merge(
+  x = allSamplesList[["SCT01"]], 
+  y = allSamplesList[["SCT01n"]], 
+  add.cell.id = c("SCT01c",  "SCT01n")
+)
+# Add the metadata to SCT01n
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# Step 1: Extract cell names from both SCT01n and SCT01merge
+cells_in_SCT01n <- rownames(metadataNuc)  # Assuming you have the SCT01n object separately
+cells_in_SCT01merge <- colnames(SCT01merge)
+
+# Step 2: Filter cells in SCT01merge that come from SCT01n
+# Assuming SCT01n cells are named with the prefix "SCT01n_"
+cells_from_SCT01n_in_SCT01merge <- grep("^SCT01n_", cells_in_SCT01merge, value = TRUE)
+
+# Step 3: Compare the cell names
+# Cells in SCT01n that are also in SCT01merge
+common_cells <- intersect(cells_in_SCT01n, cells_from_SCT01n_in_SCT01merge)
+
+# Cells in SCT01n but not in SCT01merge
+unique_to_SCT01n <- setdiff(cells_in_SCT01n, common_cells)
+
+# Cells in SCT01merge from SCT01n that are not in SCT01n
+unique_to_SCT01merge <- setdiff(cells_from_SCT01n_in_SCT01merge, common_cells)
+
+# Print the results
+cat("Cells in SCT01n that are also in SCT01merge:\n")
+print(common_cells)
+
+cat("\nCells in SCT01n but not in SCT01merge:\n")
+print(unique_to_SCT01n)
+
+cat("\nCells in SCT01merge from SCT01n that are not in SCT01n:\n")
+print(unique_to_SCT01merge)
+```
+
+
+
+```{r}
+metadataNuc <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20241120.rds")
+metadataNuc = dplyr::select(metadataNuc, HiResNamedOrdered)
+
+SCT01merge = AddMetaData(SCT01merge, metadata = metadataNuc)
+Idents(SCT01merge) <- "orig.ident"
+SCT01merge = RenameIdents(SCT01merge, "SCT01" = "SCT01c")
+SCT01merge$orig.ident <- Idents(SCT01merge) 
+```
+
+```{r}
+SCT01merge <- JoinLayers(SCT01merge)
+SCT01merge <- geneLevelFiltering(SCT01merge, remove_mito = TRUE)
+SCT01merge = subset(x = SCT01merge, 
+                          subset= (nCount_RNA >= 2000) & 
+                            (nCount_RNA <= 25000) & 
+                            (nFeature_RNA >= 2000))
+```
+
+```{r}
+
+# remove useless metadata
+pANN_columns <- grep("pANN", colnames(SCT01merge@meta.data), value = TRUE)
+DFclass_columns <- grep("DF.class", colnames(SCT01merge@meta.data), value = TRUE)
+RNAres_columns <- grep("RNA_snn_", colnames(SCT01merge@meta.data), value = TRUE)
+
+SCT01merge@meta.data <- SCT01merge@meta.data[, !colnames(SCT01merge@meta.data) %in% pANN_columns]
+SCT01merge@meta.data <- SCT01merge@meta.data[, !colnames(SCT01merge@meta.data) %in% DFclass_columns]
+SCT01merge@meta.data <- SCT01merge@meta.data[, !colnames(SCT01merge@meta.data) %in% RNAres_columns]
+
+
+
+rm(DFclass_columns, pANN_columns, RNAres_columns)
+```
+
+```{r}
+SCT01merge[["RNA"]] <- split(SCT01merge[["RNA"]], f = SCT01merge$orig.ident)
+# This is in case you need to regress out the samples
+# SCT01merge <- SCT01merge %>%
+#   NormalizeData() %>%
+#   FindVariableFeatures() %>%
+#   ScaleData(vars.to.regress = c("nFeature_RNA", "nCount_RNA")) %>%
+#   RunPCA(npcs = 60)
+SCT01merge <- SCT01merge %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData() %>%
+  RunPCA(npcs = 60) 
+
+```
+
+```{r}
+p = ElbowPlot(SCT01merge, ndims = 60) + geom_vline(xintercept=18, linetype="dotted")
+print(p)
+```
+
+
+```{r}
+
+SCT01merge <- IntegrateLayers(
+  object = SCT01merge, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE
+)
+
+SCT01merge <- FindNeighbors(SCT01merge, reduction = "harmony", dims = 1:18)
+SCT01merge <- FindClusters(SCT01merge, resolution = 0.1, cluster.name = "harmony_clusters")
+SCT01merge <- RunUMAP(SCT01merge, reduction = "harmony", dims = 1:18, reduction.name = "umap.harmony")
+
+```
+
+
+
+
+```{r}
+# p0_unIntUMAP <- DimPlot_scCustom(
+#   SCT01merge,
+#   reduction = "umap.unintegrated",
+#   group.by = c("orig.ident", "unintegrated_clusters", "NamedClusters"),
+#   combine = T, label.size = 2,
+#   colors_use = color_use
+# )
+# p0_splitUMAP <- DimPlot_scCustom(
+#   SCT01merge,
+#   reduction = "umap.unintegrated", 
+#   group.by = c("unintegrated_clusters"), 
+#   split.by = ("orig.ident"),
+#   colors_use = color_use)
+
+
+
+p2_harmUMAP <- DimPlot_scCustom(
+  SCT01merge,
+  reduction = "umap.harmony",
+  group.by = c("orig.ident", "harmony_clusters", "NamedClusters"),
+  combine = T, label.size = 2
+)
+p2_splitUMAP <- DimPlot_scCustom(
+  SCT01merge, 
+  reduction = "umap.harmony", 
+  group.by = c("harmony_clusters"), 
+  split.by = ("orig.ident"))
+
+
+#######
+# Plot the maps
+########
+#pdf(file = "figures/______/_____.pdf", width = 14)
+# p0_unIntUMAP
+# p0_splitUMAP
+
+p2_harmUMAP
+p2_splitUMAP
+
+#dev.off()
+
+
+#rm(p0_splitUMAP, p0_unIntUMAP, p1_ccaUMAP, p1_splitUMAP, p2_harmUMAP, p2_splitUMAP, p4_harmUMAP, p4_splitUMAP)
+```
+
+```{r}
+DimPlot(
+  SCT01merge, 
+  reduction = "umap.harmony", 
+  group.by = c("HiResNamedOrdered"), 
+  split.by = ("orig.ident"),
+  pt.size = 4,
+  cols = pal1, combine = T, ncol = 2, na.value = "lightgrey"
+)
+p2 <- DimPlot(
+  SCT01merge, 
+  reduction = "umap.harmony", 
+  group.by = c("HiResNamedOrdered"), 
+  #split.by = ("orig.ident"),
+  pt.size = 4,
+  cols = pal1, combine = T, ncol = 2, na.value = "lightgrey"
+)
+```
+
+```{r}
+Idents(SCT01merge) = SCT01merge$harmony_clusters
+SCT01merge <- RenameIdents(object = SCT01merge, 
+                      '0' = "Fibro",
+                      '1' = "Imm_Mac",
+                      '2' = "Endo",
+                      '3' = "SmMusc",
+                      '4' = "Imm_T_NKT",
+                      '5' = "Neuroecto",
+                      '6' = "Chondro")
+SCT01merge$integratedName <- Idents(SCT01merge)
+```
+
+
+
+```{r}
+library(scales)
+
+# Function to blend two colors
+blend_colors <- function(color1, color2, proportion = 0.5) {
+  blended_color <- col2rgb(color1) * proportion + col2rgb(color2) * (1 - proportion)
+  rgb(blended_color[1], blended_color[2], blended_color[3], maxColorValue = 255)
+}
+
+# Blend colors for Fibro
+fibro_color <- blend_colors("#D1A1DA", "#C882D5")
+fibro_color <- blend_colors(fibro_color, "#A67BB4", proportion = 0.33) # Adjust proportion if needed
+
+# Blend colors for Imm_Mac.Neutr
+imm_mac_neutr_color <- blend_colors("#85C1E9", "#3498DB")
+
+# Blend colors for Imm_T_NKT
+imm_t_nkt_color <- blend_colors("#5DADE2", "#1F618D")
+
+# New palette with blended colors
+new_palette <- c(
+  Fibro = fibro_color,            # Blended fibro color
+  SmMusc = "#A259C0",             # sm_musc color
+  Imm_Mac = imm_mac_neutr_color,  # Blended mac and neutro color
+  Endo = "#F9A14B",               # vasc_endo color
+  Imm_T_NKT = imm_t_nkt_color,    # Blended t_cell and nkt color
+  Neuroecto = "#B53A3A",          # neuro color
+  Chondro = "#8E38A7"             # chondrocyte color
+)
+
+p1 = DimPlot(
+  SCT01merge, 
+  reduction = "umap.harmony", 
+  group.by = c("integratedName"), 
+  split.by = ("orig.ident"),
+  combine = T, cols = new_palette
+)
+```
+
+```{r}
+library(patchwork)
+
+# Assuming p1 and p2 are already created
+# Adjust the widths: p1 should take 1/3 of the page, p2 should take 2/3
+combined_plot <- p1 + p2 + 
+  plot_layout(ncol = 2)  # p1 takes 1 part, p2 takes 2 parts
+
+# Display the combined plot
+combined_plot
+
+```
+
+
+
+```{r}
+pdf(file = "/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/figures/20241101_UpdateTo_MakingFigure1_NewObjectHere/SCT01integrated.pdf", height = 5.25, width = 16.5)
+combined_plot
+dev.off()
+```
+
+
+# Finding all Markers
+```{r}
+annotations <- read.csv("/mnt/DATA/LairdLab/rojas/data/annotation.csv") # Gene annotations
+
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+markers <- FindAllMarkers(object = nucSamples, only.pos = TRUE, logfc.threshold = 0.25)
+
+markers.ann <- inner_join(x = markers, 
+                            y = annotations[, c("gene_name", "description")],
+                            by = c("gene" = "gene_name")) %>%
+    unique() %>%
+    arrange(cluster, p_val_adj, desc(avg_log2FC))
+
+write_csv(markers.ann, file = "results/20250331_Figure1_NewObjectHere/MarkerGenes.csv")
+
+```
+
+

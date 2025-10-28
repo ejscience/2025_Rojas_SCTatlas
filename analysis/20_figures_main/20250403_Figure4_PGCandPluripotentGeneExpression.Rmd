@@ -1,0 +1,1371 @@
+---
+title: "20250403_Figure4_PGCandPluripotentGeneExpression"
+output: html_notebook
+---
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(scCustomize)
+library(ggprism)
+library(colorRamp2)
+library(tidyverse)
+library(ComplexHeatmap)
+library(ggpattern)
+library(viridis)
+library(scales)
+library(dplyr)
+library(pheatmap)
+
+get_legend <- function(my_plot) {
+  tmp <- ggplot_gtable(ggplot_build(my_plot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+
+# Immune (Blue) shades
+Immune_shades <- c("#85C1E9", "#5DADE2", "#3498DB", "#2980B9", "#1F618D")
+
+# Neuroectoderm (Red) shades
+Neuroectoderm_shades <- c("#E57373", "#D64A4A", "#B53A3A", "#A83232")
+
+# Epithelia (Green) shades
+Epithelia_shades <- c("#A8E6A3", "#7CC47F", "#61B14B", "#88C992", "#4E9835", "#009A44", "#3CB371")
+
+# Stroma (Purple) shades
+Stroma_shades <- c("#D1A1DA", "#C882D5", "#A259C0", "#8E38A7", "#754C96", "#A67BB4", "#B46BB2")
+
+# Endothelia (Orange) shades
+Endothelia_shades <- c("#F9A14B", "#F47D2D", "#D36E20", "#FFB14C")
+
+# Combine all shades into one palette
+pal1 <- c(
+  Epithelia_shades,
+  Stroma_shades,
+  Endothelia_shades,
+  Immune_shades,
+  Neuroectoderm_shades
+)
+
+# Assign names to the colors
+names(pal1) <- c(
+  "BPIFB1+_epi",
+  "OCT4+_epi",
+  "LGR5+_epi",
+  "Epithelia_spare",
+  "cycl_epi",
+  "cilia_epi",  
+  "enterochromaffin", # Extra in case you need it
+
+  "fibroblast",
+  "COL12A1+_myofibro",
+  "sm_musc",
+  "chondrocyte",
+  "cycl_mesench",
+  "PAX7+_musc_MSC",
+  "sk_musc",
+
+  "vasc_endo",
+  "vein_endo",
+  "lymph_endo",
+  "cycl_endo",
+
+  "mac",
+  "infl_mac",
+  "t_cell",
+  "mast",
+  "nkt",
+
+  "GFAP+_astro_radGlia",
+  "neuro",
+  "oligo",
+  "CUX2+_cilia_astro_radGlia"
+)
+
+# Check the final palette
+pal1
+
+
+pal_broad <- c("Stroma" =  "#9467bd", "Epithelia" = "#2ca02c", "Endothelia" = "#ff7f0e", "Neuroectoderm" = "#d62728", "Immune" = "#1f77b4")
+pal_solidcystic <- c("solid" = "#696969", "cystic" = "#D3D3D3")
+pal_epithrichpoor <- c("EpitheliaRich" = "orange", "EpitheliaPoor" = "blue", "epithelia_rich" = "orange", "epithelia_poor"= "blue")
+pal_samples <- c(
+  "SCT02" = "#66C2A5",
+  "SCT06" = "#FC8D62",
+  "SCT09" = "#8DA0CB",
+  "SCT01" = "#E78AC3",
+  "SCT03" = "#A6D854",
+  "SCT10" = "#FFD92F"
+)
+set.seed(12345)
+
+```
+
+
+```{r}
+nucSamples = readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+metadata <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+nucSamples@meta.data = metadata
+rm(metadata)
+nucSamples$EpitheliaRichPoor = factor(nucSamples$EpitheliaRichPoor, levels = c("EpitheliaPoor", "EpitheliaRich"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+Idents(nucSamples) <- "orig.ident"
+nucSamples <- RenameIdents(nucSamples, "SCT01" = "epitheliaPoor",
+                      "SCT03" = "epitheliaPoor", 
+                      "SCT09" = "epitheliaPoor",
+                       "SCT10" = "epitheliaRich_OCT4hi", 
+                       "SCT02" = "epitheliaRich_OCT4lo",
+                     "SCT06" = "epitheliaRich_OCT4lo")
+nucSamples$EpitheliaSplit <- Idents(nucSamples)
+nucSamples$EpitheliaSplit = factor(nucSamples$EpitheliaSplit, levels = c("epitheliaRich_OCT4hi", "epitheliaPoor", "epitheliaRich_OCT4lo"))
+
+
+# Create a new metadata column "Sex" and assign "Female" by default
+nucSamples$Sex <- "Female"
+# Assign "Male" to cells from SCT06
+nucSamples$Sex[nucSamples$orig.ident == "SCT06"] <- "Male"
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples
+DimPlot_scCustom(nucSamples, reduction = "umap.harmony", group.by = "HiResNamedOrdered", colors_use = pal1)
+
+
+```
+
+
+
+```{r}
+# Example genes (placeholder)
+all_pluri_genes_to_plot <- c("POU5F1", "DNMT3B", "SOX2", "NODAL", "UTF1", "LIN28A", "LEFTY1", "GDF3",
+                   "SDC2", "NANOG", "LIN28B", "HESX1", "LCK", "LEFTY2", "ZFP42", "OTX2",
+                   "DPPA2", "IDO1", "HHEX", "NR5A2", "DPPA5", "PDGFRA", "MIXL1", "HEY1",
+                   "TRIM22", "COL2A1", "MAP2", "KLF4", "FOXA2", "EOMES", "DMBX1", "CXCL5",
+                   "IL6ST", "TBX3", "CPLX2", "PAPLN", "RGS4", "TFCP2L1", "PAX6", "CLDN1",
+                   "DRD4", "OLFM3", "NPPB", "GATA4", "TM4SF1", "FOXP2", "KLF5", "CDH9",
+                   "SST", "SNAI2", "ALOX5", "T", "FGF4", "NOS2", "NKX2-5", "MYO3B")
+all_pgc_genes_to_plot <- c(
+  "POU5F1",
+  "NANOG",
+  "TCL1A",
+  "PDPN",
+  "PCSK1N",
+  "PRDM1",
+  "NANOS3",
+  "KHDC3L",
+  "TFAP2C",
+  "SOX15",
+  "SMAD1",
+  "SOX17",
+  "SOHLH1",
+  "LIT1",
+  "UTF1",
+  "KIT",
+  "DDX4",
+  "DND1",
+  "ALPL",
+  "DAZL" 
+)
+
+# Genes in your desired order
+key_genes_to_plot <- c(
+  # Shared: 
+  "POU5F1","NANOG", "ALPL",
+  # Pluripotency: 
+  "SOX2", "KLF4", "LIN28A", "LIN28B",
+  # PGC: 
+  "TFAP2C","PRDM1", "SOX17", "KIT", "DND1", "NANOS3", 
+  # Late: 
+  "DDX4", "DAZL"
+)
+
+# Define categories for each gene
+key_gene_categories <- c(
+  "POU5F1"  = "Shared",
+  "NANOG"   = "Shared",
+  "ALPL"    = "Shared",
+  "SOX2"    = "Pluripotency",
+  "KLF4"    = "Pluripotency",
+  "LIN28A"  = "Pluripotency",
+  "LIN28B"  = "Pluripotency",
+  "PRDM1"   = "PGC",
+  "TFAP2C"  = "PGC",
+  "KIT"     = "PGC",
+  "DND1"    = "PGC",
+  "NANOS3"  = "PGC",
+  "SOX17"   = "PGC",
+  "DDX4"    = "Late",
+  "DAZL"    = "Late"
+)
+
+genesFromHambraeus2022 = c("PRDM1", "ALPL", "SOX2","TFAP2C", "KIT", "PRAME", "DND1")
+PGCpluri_favoritegenes <- c("POU5F1", "NANOG", "SOX2", "SOX17", "PRDM1", "TFAP2C", "DDX4", "DAZL")
+
+```
+
+## Plot the genes from Hambraeus 2022
+```{r}
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/DotPlot_Broad_OfHambraeus2022Genes.pdf", height = 6, width = 8)
+DotPlot_scCustom(nucSamples, features = genesFromHambraeus2022, group.by = "BroadCategory", x_lab_rotate = T, split.by = "orig.ident", cols = "RdBu")
+dev.off()
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/DotPlot_SubCat_OfHambraeus2022Genes.pdf", height = 16, width = 6.5)
+DotPlot_scCustom(nucSamples, features = genesFromHambraeus2022, group.by = "HiResNamedOrdered", x_lab_rotate = T, split.by = "orig.ident", cols = "RdBu", facet_label_rotate = T)
+dev.off()
+```
+
+
+
+```{r}
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/UMAPsOfHambraeus2022Genes.pdf", height = 12, width = 12)
+FeaturePlot_scCustom(nucSamples, features = genesFromHambraeus2022, reduction = "umap.harmony", split.by = "orig.ident", num_columns = 6) & NoAxes() & ggtitle(NULL)
+dev.off()
+DotPlot_scCustom()
+
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/UMAPsOfKeyPluripotencyGenes.pdf", height = 24, width = 20)
+p1 = FeaturePlot_scCustom(nucSamples, features = key_genes_to_plot, reduction = "umap.harmony", split.by = "orig.ident", num_columns = 6) & NoAxes() & NoLegend() & ggtitle(NULL)
+print(p1)
+dev.off()
+
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/UMAPsOfKeyPluripotencyGenes_Forlegend.pdf")
+# Extract and display the legend (shows mapping "0: original_cluster")
+FeaturePlot_scCustom(nucSamples, features = key_genes_to_plot, reduction = "umap.harmony", pt.size = 0)
+dev.off()
+
+```
+
+```{r}
+# Load libraries
+library(Seurat)
+library(pheatmap)
+library(viridis)
+library(RColorBrewer)
+
+# Step 1. Create new metadata columns for Sample and CellType.
+# Here we assume that orig.ident contains extra information separated by dashes.
+nucSamples$Sample <- sapply(strsplit(as.character(nucSamples$orig.ident), "-"), `[`, 1)
+# For the cell type, use the HiResNamedOrdered column directly.
+nucSamples$CellType <- as.character(nucSamples$HiResNamedOrdered)
+
+# Now build a new combined grouping variable using a dash as the separator.
+nucSamples$combined2 <- paste(nucSamples$Sample, nucSamples$CellType, sep = "-")
+
+# -------------------------------
+# Step 2. Compute average expression using the new grouping variable.
+avg_seurat <- AverageExpression(nucSamples, 
+                                  features = key_genes_to_plot, 
+                                  group.by = "combined2",
+                                  return.seurat = TRUE)
+
+# Extract the average expression matrix from the RNA assay.
+avg_expr_mat <- GetAssayData(avg_seurat)
+# Reorder genes (rows) to match the order in key_genes_to_plot.
+avg_expr_mat <- avg_expr_mat[key_genes_to_plot, , drop = FALSE]
+
+# -------------------------------
+# Step 3. Build an annotation data frame from the new metadata.
+# Extract unique combinations of Sample, CellType, SolidCystic, and EpitheliaRichPoor.
+annot_df <- unique(nucSamples@meta.data[, c("BroadCategory", "Sample", "CellType", "SolidCystic", "EpitheliaRichPoor")])
+# Build a combined label matching the one used for AverageExpression.
+annot_df$combined2 <- paste(annot_df$Sample, annot_df$CellType, sep = "-")
+annot_df$combined2 <- gsub("_", "-", annot_df$combined2)
+
+# Factorize the Sample factor in the desired order.
+annot_df$Sample <- factor(annot_df$Sample, levels = c("SCT02", "SCT06", "SCT09", "SCT01", "SCT03", "SCT10"))
+# Factorize the CellType using the order from your provided palette (assumes names(pal1) are in the desired order)
+annot_df$CellType <- factor(annot_df$CellType, levels = names(pal1))
+
+# Optionally factorize SolidCystic and EpitheliaRichPoor if needed.
+annot_df$SolidCystic <- as.factor(annot_df$SolidCystic)
+annot_df$EpitheliaRichPoor <- as.factor(annot_df$EpitheliaRichPoor)
+
+# Order the annotation data frame by Sample then CellType.
+annot_df <- annot_df[order(annot_df$Sample, annot_df$CellType), ]
+# Create an ordering vector of combined labels.
+combined_order <- annot_df$combined2
+
+# Check that these names exist in avg_expr_mat.
+missing_groups <- setdiff(combined_order, colnames(avg_expr_mat))
+if(length(missing_groups) > 0) {
+  warning("The following groups are missing in avg_expr_mat: ", paste(missing_groups, collapse = ", "))
+}
+
+# Reorder the columns of the average expression matrix using the ordering vector.
+avg_expr_mat <- avg_expr_mat[, combined_order, drop = FALSE]
+
+# Build the annotation data frame for pheatmap.
+annotation <- annot_df[, c("EpitheliaRichPoor","SolidCystic", "BroadCategory")] # Add back "Sample", "CellType", if needed
+rownames(annotation) <- annot_df$combined2
+
+# -------------------------------
+# Step 4. Define annotation colors.
+# For Sample, use ColorBrewer's Set2 palette.
+
+# sample_levels <- levels(annot_df$Sample)
+# sample_colors <- setNames(brewer.pal(n = length(sample_levels), name = "Set2"), sample_levels)
+# For CellType, use your provided pal1.
+annotation_colors <- list(Sample = sample_colors, CellType = pal1, BroadCategory = pal_broad, SolidCystic = pal_solidcystic, EpitheliaRichPoor = pal_epithrichpoor)
+
+# Use viridis for the heatmap color palette.
+heatmap_colors <- magma(100)
+
+# Create a data frame for gene annotation.
+gene_annotation <- data.frame(Category = key_gene_categories)
+rownames(gene_annotation) <- names(key_gene_categories)
+
+# Define gene annotation colors.
+gene_colors <- c("Shared" = "black", 
+                 "Pluripotency" = "lightgrey", 
+                 "PGC" = "grey50", 
+                 "Late" = "darkgrey")
+
+# Update the annotation colors list to include gene categories.
+annotation_colors[["Category"]] <- gene_colors
+
+# -------------------------------
+# Step 5. Plot the heatmap including row (gene) annotations.
+p1 = pheatmap(t(avg_expr_mat), # transpose for the genes to be on X axis
+         annotation_row = annotation,      # row annotations: #Sample, CellType, SolidCystic, EpitheliaRichPoor
+         annotation_col = gene_annotation,   # column annotations for gene categories
+         annotation_colors = annotation_colors,
+         cluster_rows = T,  # Preserve gene order as in key_genes_to_plot
+         cluster_cols = F,   # Clustering columns (or set to FALSE for manual ordering)
+         color = heatmap_colors,
+         #scale = "column",
+         main = "Average Expression Heatmap")
+
+print(p1)
+```
+
+
+```{r}
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/KeyPluripotentAndPGCgenesHeatmap.pdf", height = 20, width = 10)
+print(p1)
+dev.off()
+```
+
+
+PICK IF YOU WANT CUTOFF OF 1 or 0
+
+```{r}
+# 1. Define the genes of interest
+PGCpluri_favoritegenes <- c("POU5F1", "NANOG", "SOX2", "SOX17", "PRDM1", "TFAP2C", "DDX4", "DAZL")
+
+# 2. Extract expression data from the 'data' slot for these genes
+expr_data <- GetAssayData(nucSamples, assay = "RNA", layer = "data")[PGCpluri_favoritegenes, ]
+
+# 3. Create a binary matrix (TRUE if expression > 0) and then a combination string per cell
+binary_expr <- expr_data > 0.5
+
+# For each cell, list the genes that are expressed (above 0)
+gene_combination <- apply(binary_expr, 2, function(cell_expr) {
+  expressed_genes <- PGCpluri_favoritegenes[cell_expr]
+  if(length(expressed_genes) == 0) {
+    return("None")
+  } else {
+    # Sort to maintain consistency in naming
+    return(paste(sort(expressed_genes), collapse = "_"))
+  }
+})
+
+# 4. Order the combinations by the number of genes expressed, then alphabetically
+# Create a data frame of unique combinations
+comb_df <- data.frame(combination = unique(gene_combination), stringsAsFactors = FALSE)
+comb_df$numGenes <- ifelse(comb_df$combination == "None", 
+                           0, 
+                           sapply(strsplit(comb_df$combination, "_"), length))
+# Order the combinations as desired
+comb_df <- comb_df[order(comb_df$numGenes, comb_df$combination), ]
+ordered_levels <- comb_df$combination
+
+# 5. Add the gene combination as a new metadata column and set factor levels accordingly
+nucSamples <- AddMetaData(nucSamples, metadata = gene_combination, col.name = "geneCombination")
+nucSamples$geneCombination <- factor(nucSamples$geneCombination, levels = ordered_levels)
+
+# (Optional) Check the frequency of each combination
+print(table(nucSamples$geneCombination))
+
+# 6. Plot using FeaturePlot_scCustomize, ordering cells so that cells with more markers (or a specific combination) are on top
+p1 = DimPlot_scCustom(nucSamples, 
+                 reduction = "umap.harmony", 
+                 split.by = "geneCombination", colors_use = pal1, split_seurat = T, num_columns = 4, label = F, pt.size = 3)
+print(p1)
+
+```
+
+
+```{r}
+pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/combinationsOfFewMarkersPGCpluri.pdf", height = 15, width = 6)
+print(p1)
+dev.off()
+
+```
+
+```{r}
+# Create a contingency table with geneCombination as rows and orig.ident as columns
+combination_by_orig <- table(nucSamples$geneCombination, nucSamples$orig.ident)
+print(combination_by_orig)
+
+# Convert the table to a matrix (it might already be one) and write it to CSV with row names
+write.csv(as.matrix(combination_by_orig), 
+          file = "results/20250403_Figure4_PGCandPluripotentGeneExpression/CombinationsCellsExpressingSmallKeyGenesPGCandPlurMarkersAbove0-5.csv", 
+          row.names = TRUE)
+```
+
+
+
+
+HERE I DO All the key genes 
+
+```{r}
+
+
+# 2. Extract expression data from the 'data' slot for these genes
+expr_data <- GetAssayData(nucSamples, assay = "RNA", layer = "data")[genes_of_interest, ]
+
+# 3. Create a binary matrix (TRUE if expression > 0) and then a combination string per cell
+binary_expr <- expr_data > 0.5
+
+# For each cell, list the genes that are expressed (above 0)
+gene_combination <- apply(binary_expr, 2, function(cell_expr) {
+  expressed_genes <- genes_of_interest[cell_expr]
+  if(length(expressed_genes) == 0) {
+    return("None")
+  } else {
+    # Sort to maintain consistency in naming
+    return(paste(sort(expressed_genes), collapse = "_"))
+  }
+})
+
+# 4. Order the combinations by the number of genes expressed, then alphabetically
+# Create a data frame of unique combinations
+comb_df <- data.frame(combination = unique(gene_combination), stringsAsFactors = FALSE)
+comb_df$numGenes <- ifelse(comb_df$combination == "None", 
+                           0, 
+                           sapply(strsplit(comb_df$combination, "_"), length))
+# Order the combinations as desired
+comb_df <- comb_df[order(comb_df$numGenes, comb_df$combination), ]
+ordered_levels <- comb_df$combination
+
+# 5. Add the gene combination as a new metadata column and set factor levels accordingly
+nucSamples <- AddMetaData(nucSamples, metadata = gene_combination, col.name = "geneCombination")
+nucSamples$geneCombination <- factor(nucSamples$geneCombination, levels = ordered_levels)
+
+# (Optional) Check the frequency of each combination
+print(table(nucSamples$geneCombination))
+
+# 6. Plot using FeaturePlot_scCustomize, ordering cells so that cells with more markers (or a specific combination) are on top
+DimPlot_scCustom(nucSamples, 
+                 reduction = "umap.harmony", 
+                 split.by = "geneCombination", colors_use = pal1, split_seurat = T, num_columns = 4, label = F, pt.size = 3)
+
+
+# Create a contingency table with geneCombination as rows and orig.ident as columns
+combination_by_orig <- table(nucSamples$geneCombination, nucSamples$orig.ident)
+print(combination_by_orig)
+
+# Convert the table to a matrix (it might already be one) and write it to CSV with row names
+write.csv(as.matrix(combination_by_orig), 
+          file = "results/20250403_Figure4_PGCandPluripotentGeneExpression/CombinationsCellsExpressingAllKeyGenesPGCandPlurMarkersAbove0-5.csv", 
+          row.names = TRUE)
+
+
+```
+
+```{r}
+FeaturePlot(nucSamples, features = c("POU5F1", "NANOG"), reduction = "umap.harmony", blend = T, order = T, cols = c("lightgrey", "red", "green"), blend.threshold = 0.1, pt.size = 3)
+
+
+```
+
+```{r}
+
+# 1. Subset cells with POU5F1 and NANOG expression above 0.5 (using normalized data in the "data" slot)
+# Note: Adjust the slot/assay if your normalized values are stored differently.
+subset_obj_OCT4andNANOG <- subset(nucSamples, subset = (POU5F1 > 0.5 & NANOG > 0.5))
+
+# 2. Create a combined grouping variable to split by sample and HiResNamedOrdered (if needed)
+# Here we assume your sample ID is stored in "orig.ident" and your secondary group in "HiResNamedOrdered"
+subset_obj_OCT4andNANOG$Sample_HiRes <- paste(subset_obj_OCT4andNANOG$orig.ident, subset_obj_OCT4andNANOG$HiResNamedOrdered, sep = "_")
+
+Stacked_VlnPlot(subset_obj_OCT4andNANOG, features = other_genes, group.by = "Sample_HiRes", pt.size = 3, x_lab_rotate = T)
+
+```
+
+
+# TF Network analysis 
+We will use decoupleR to analyze the TF networks. Read more [here](https://saezlab.github.io/decoupleR/articles/tf_sc.html)
+
+```{r}
+library(decoupleR)
+net <- decoupleR::get_collectri(organism = 'human', 
+                                split_complexes = FALSE)
+
+net
+pluri_tfs <- c(
+  # core pluripotency
+  "POU5F1","SOX2","NANOG","KLF4","MYC","ESRRB","TFCP2L1","KLF17","ZFP42","PRDM14","NR0B1","LIN28A","LIN28B",
+  # early/PGC-ish & supportive
+  "TFAP2C","OTX2","TEAD4","SALL4","DNMT3B","SMAD2","SMAD3","SMAD4","STAT3","TCF7L1","TCF7L2"
+)
+
+# Keep only your TFs and genes present in the assay
+genes_present <- rownames(nucSamples[["RNA"]])
+net_pluri <- net %>%
+  filter(source %in% pluri_tfs, target %in% genes_present) %>%
+  group_by(source) %>%
+  #filter(n_distinct(target) >= 5) %>%    # keep TFs with enough targets
+  ungroup()
+
+
+mat <- as.matrix(nucSamples@assays$RNA$data)
+```
+
+## WARNING: This is required for the very large cluster
+We now run `run_ulm` using a parallel model. We wanted to do this to speed computation.
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(decoupleR); library(Seurat); library(dplyr); library(Matrix)
+  library(tidyr); library(BiocParallel)
+})
+
+## --- Inputs (yours) ---
+net <- get_collectri(organism = "human", split_complexes = FALSE)
+mat_sparse <- nucSamples@assays$RNA$data   # dgCMatrix (genes x cells)
+
+## 1) Trim net to genes present (full TF set otherwise unchanged)
+genes_present <- rownames(mat_sparse)
+net_use <- net %>%
+  filter(target %in% genes_present) %>%
+  group_by(source) %>%
+  filter(n_distinct(target) >= 5) %>%        # decoupleR's minsize will use this too
+  ungroup()
+
+## 2) Shrink expression rows to the union of all targets actually used
+targets_union <- unique(net_use$target)
+mat_sparse <- mat_sparse[targets_union, , drop = FALSE]   # still sparse
+
+## 3) Choose chunk size and parallel workers
+# Rough RAM for a dense block ~= 8 bytes * n_genes * chunk_size
+# e.g., 12,000 genes x 2,000 cells ≈ 192 MB (+ overhead). Tune to your server.
+chunk_size <- 2000L       # try 1500–4000
+workers    <- 16L         # set to your physical cores
+
+nc <- ncol(mat_sparse)
+chunks <- split(seq_len(nc), ceiling(seq_len(nc) / chunk_size))
+
+# Register a parallel backend (Multicore on Linux; SnowParam if fork not allowed)
+register(MulticoreParam(workers = workers))
+# If forking is blocked on your cluster, use:
+# register(SnowParam(workers = workers, type = "PSOCK"))
+
+## 4) ULM on each column block (dense only for the small block)
+run_ulm_block <- function(cols){
+  m_block <- as.matrix(mat_sparse[, cols, drop = FALSE])  # densify only the chunk
+  decoupleR::run_ulm(
+    mat = m_block,
+    net = net_use,
+    .source = "source",
+    .target = "target",
+    .mor    = "mor",
+    minsize = 5
+  )
+}
+
+## 5) Run in parallel and combine to the same long format as decoupleR
+acts_list <- bplapply(chunks, run_ulm_block)
+acts <- dplyr::bind_rows(acts_list)
+
+## 6) (Optional) quick sanity + throughput
+print(acts, n=5)
+message(sprintf("cells processed: %d", length(unique(acts$condition))))
+
+```
+
+
+```{r}
+saveRDS(acts, file = "data/20250403_Figure4_PGCandPluripotentGeneExpression/TFacts.rds")
+```
+
+
+```{r}
+# Extract ulm and store it in tfsulm in pbmc
+nucSamples[['tfsulm']] <- acts %>%
+                    tidyr::pivot_wider(id_cols = 'source', 
+                                       names_from = 'condition',
+                                       values_from = 'score') %>%
+                    tibble::column_to_rownames('source') %>%
+                    Seurat::CreateAssayObject(.)
+
+# Change assay
+DefaultAssay(object = nucSamples) <- "tfsulm"
+
+# Scale the nucSamples
+nucSamples <- Seurat::ScaleData(nucSamples)
+nucSamples@assays$tfsulm$data <- nucSamples@assays$tfsulm$scale.data
+DefaultAssay(object = nucSamples) <- "RNA"
+
+```
+
+
+```{r}
+acts %>%
+  filter(source %in% pluri_tfs) %>%
+  ggplot(aes(x = p_value)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+  facet_wrap(~ source, scales = "free_y") +
+  theme_bw() +
+  labs(title = "ULM p-value distributions for pluripotency TFs",
+       x = "p-value", y = "Cell count")
+
+acts %>%
+  filter(source %in% tfs_show) %>%
+  summarise(
+    n_cells = n(),
+    n_sig_0.05 = sum(p_value < 0.05, na.rm = TRUE),
+    frac_sig = mean(p_value < 0.05, na.rm = TRUE)
+  , .by = source)
+
+```
+
+```{r}
+p1 <- Seurat::DimPlot(nucSamples, 
+                      reduction = "umap.harmony", 
+                      label = TRUE, 
+                      pt.size = 0.5, 
+                      cols = pal1) + 
+      Seurat::NoLegend() + 
+      ggplot2::ggtitle('Cell types')
+
+
+colors <- rev(RColorBrewer::brewer.pal(n = 11, name = "RdBu")[c(2, 10)])
+
+Seurat::DefaultAssay(nucSamples) <- "tfsulm"
+p2 <- Seurat::FeaturePlot(nucSamples, features = c("POU5F1"), reduction = "umap.harmony",) + 
+      ggplot2::scale_colour_gradient2(low = colors[1], mid = 'white', high = colors[2]) +
+      ggplot2::ggtitle('POU5F1 activity')
+
+
+DefaultAssay(object = nucSamples) <- "RNA"
+p3 <- Seurat::FeaturePlot(nucSamples, 
+                          features = c("POU5F1"),
+                          reduction = "umap.harmony",) + 
+      ggplot2::ggtitle('POU5F1 expression')
+
+Seurat::DefaultAssay(nucSamples) <- "tfsulm"
+
+p <- p1 | p2 | p3
+p
+```
+
+```{r}
+TF_key_genes_to_plot = key_genes_to_plot[key_genes_to_plot %in% unique(net$source)]
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(tibble)
+  library(ComplexHeatmap); library(circlize)
+  library(Seurat); library(rlang)
+})
+
+# ------------ SETTINGS (edit these to your column names) ------------
+# samples (SCT runs)
+sample_col   <- "orig.ident"          # or "SCT" if that's your sample label
+# fine cell subtypes (must match names in pal1)
+cluster_col  <- "HiResNamedOrdered"
+# other metadata columns you want as annotations
+solidcystic_col   <- "SolidCystic"
+epithrichpoor_col <- "EpitheliaRichPoor"
+sex_col           <- "Sex"
+
+# which TFs to show (example: pluripotency set)
+#tfs_show <- c("POU5F1","SOX2","NANOG","PRDM14","TFCP2L1","ESRRB","KLF4","MYC")
+tfs_show <- TF_key_genes_to_plot
+
+# keep only statistically significant TF×cell pairs before averaging?
+mask_nonsig <- TRUE
+fdr_cut     <- 0.05
+
+# scale rows (z-score per TF across columns) for a “relative” version?
+scale_rows <- TRUE  # TRUE mimics the paper's relative contrast
+
+# ------------ 1) SIGNIFICANCE MASK (BH per TF) ------------
+acts_sel <- acts %>%
+  filter(source %in% tfs_show) %>%
+  group_by(source) %>%
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>%
+  ungroup()
+
+acts_use <- if (mask_nonsig) {
+  acts_sel %>% mutate(score_use = ifelse(p_adj < fdr_cut, score, NA_real_))
+} else {
+  acts_sel %>% mutate(score_use = score)
+}
+
+# ------------ 2) JOIN METADATA ------------
+meta <- nucSamples@meta.data %>%
+  rownames_to_column("condition") %>%
+  select(
+    condition,
+    Sample   = all_of(sample_col),
+    Subtype  = all_of(cluster_col),
+    SolidCystic   = all_of(solidcystic_col),
+    EpithRichPoor = all_of(epithrichpoor_col),
+    Sex           = all_of(sex_col)
+  )
+
+acts_joined <- acts_use %>%
+  left_join(meta, by = "condition") %>%
+  filter(!is.na(Sample), !is.na(Subtype))
+
+# ------------ 3) AGGREGATE: mean per (Sample × Subtype × TF) ------------
+agg <- acts_joined %>%
+  group_by(source, Sample, Subtype) %>%
+  summarise(mean_score = mean(score_use, na.rm = TRUE),
+            n_sig = sum(!is.na(score_use)), .groups = "drop")
+
+# Optionally drop columns with zero significant cells (when masking)
+agg <- if (mask_nonsig) filter(agg, n_sig > 0) else agg
+
+# Wide matrix: rows = TFs, cols = "Sample | Subtype"
+agg <- agg %>% mutate(col_key = paste(Sample, Subtype, sep = " | "))
+
+mat <- agg %>%
+  select(source, col_key, mean_score) %>%
+  pivot_wider(id_cols = source, names_from = col_key, values_from = mean_score, values_fill = 0) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+# keep only TFs that remain
+present_tfs <- intersect(tfs_show, rownames(mat))
+mat <- mat[present_tfs, , drop = FALSE]
+
+# ------------ 4) BUILD COLUMN ANNOTATIONS ------------
+col_df <- tibble(col_key = colnames(mat)) %>%
+  separate(col_key, into = c("Sample","Subtype"), sep = " \\| ", remove = FALSE) %>%
+  left_join(
+    meta %>% distinct(Sample, SolidCystic, EpithRichPoor, Sex),
+    by = "Sample"
+  )
+
+# ---- enforce desired Subtype order (insert HERE, before 'ord <- ...') ----
+subtype_levels <- c(
+  # Ectoderm
+  "GFAP+_astro_radGlia", "CUX2+_cilia_astro_radGlia", "neuro", "oligo",
+  # Endoderm
+  "enterochromaffin", "BPIFB1+_epi", "OCT4+_epi", "LGR5+_epi", "cilia_epi", "cycl_epi",
+  # Mesoderm
+  "fibroblast", "COL12A1+_myofibro", "PAX7+_musc_MSC", "cycl_mesench", "chondrocyte",
+  "sm_musc", "sk_musc", "vasc_endo", "vein_endo", "lymph_endo", "cycl_endo",
+  "mac", "infl_mac", "t_cell", "nkt", "mast"
+)
+
+# Coerce Subtype to that exact order
+col_df$Subtype <- factor(col_df$Subtype, levels = subtype_levels)
+
+# (Optional) lock a sample order too (otherwise alphabetical)
+sample_order <- c("SCT02","SCT06","SCT09","SCT01","SCT03","SCT10")  # <-- your preferred order
+col_df$Sample <- factor(col_df$Sample, levels = sample_order)
+
+# Now order columns by Sample, then Subtype (in your chosen order)
+ord <- order(col_df$Sample, col_df$Subtype, na.last = TRUE)
+mat    <- mat[, ord, drop = FALSE]
+col_df <- col_df[ord, , drop = FALSE]
+
+# (Optional) reindex the Subtype legend to match your order
+anno_colors$Subtype <- anno_colors$Subtype[subtype_levels]
+
+# colors you already defined ------------------------------------------
+#  - pal1: named vector of colors for fine Subtype labels
+#  - pal_broad, pal_solidcystic, pal_epithrichpoor: named vectors
+# If some subtypes aren’t in pal1, give them a default:
+missing_subtype <- setdiff(unique(col_df$Subtype), names(pal1))
+if (length(missing_subtype)) {
+  extra_cols <- setNames(rep("#BBBBBB", length(missing_subtype)), missing_subtype)
+  pal1 <- c(pal1, extra_cols)
+}
+
+anno_colors <- list(
+  Sample = pal_samples,
+  Subtype       = pal1,
+  `Solid/Cystic`= pal_solidcystic,
+  `EpitheliaRich/Poor` = pal_epithrichpoor,
+  Sex = c("Female" = "pink", "Male" = "lightblue")
+)
+
+# Top annotation (stacked bars)
+ha_top <- HeatmapAnnotation(
+  Sample = col_df$Sample,
+  `Solid/Cystic` = col_df$SolidCystic,
+  `EpitheliaRich/Poor` = col_df$EpithRichPoor,
+  Sex = col_df$Sex,
+  Subtype = col_df$Subtype,
+  col = anno_colors,
+  annotation_legend_param = list(
+    Subtype = list(nrow = 3, title = "Subtype"),
+    `Solid/Cystic` = list(title = "SCT type"),
+    `EpitheliaRich/Poor` = list(title = "Epithelia bias")
+  ),
+  simple_anno_size = grid::unit(4, "mm")
+)
+
+# ---- DIAGNOSTICS: what's left out? ----
+
+# A) TF×Sample×Subtype triplets dropped because there were *zero significant* cells
+#    (only applicable when mask_nonsig == TRUE and we filtered n_sig > 0)
+if (isTRUE(mask_nonsig)) {
+  all_triplets <- acts_sel %>%
+    left_join(meta, by = "condition") %>%
+    filter(source %in% tfs_show, !is.na(Sample), !is.na(Subtype)) %>%
+    group_by(source, Sample, Subtype) %>%
+    summarise(n_total = n(), n_sig = sum(p.adjust(p_value, "BH") < fdr_cut), .groups="drop")
+  
+  dropped_triplets <- all_triplets %>%
+    filter(n_sig == 0) %>%
+    anti_join(agg, by = c("source","Sample","Subtype"))
+  
+  if (nrow(dropped_triplets)) {
+    message("Dropped TF×Sample×Subtype (no significant cells):")
+    print(dropped_triplets %>% arrange(source, Sample, Subtype), n=50)
+  } else {
+    message("No TF×Sample×Subtype triplets were dropped for lack of significance.")
+  }
+}
+
+# B) TFs that disappeared entirely (no column remained after masking/aggregation)
+dropped_tfs <- setdiff(tfs_show, rownames(mat))
+if (length(dropped_tfs)) {
+  message("TFs with no retained columns (likely no significant cells anywhere): ",
+          paste(dropped_tfs, collapse = ", "))
+}
+
+# C) Subtypes missing from the final heatmap per sample (e.g., absent or all NA)
+present_cols <- col_df %>% select(Sample, Subtype)
+miss_list <- lapply(split(present_cols$Subtype, present_cols$Sample), function(x){
+  setdiff(subtype_levels, unique(as.character(x)))
+})
+has_missing <- vapply(miss_list, function(z) length(z) > 0, logical(1))
+if (any(has_missing)) {
+  message("Subtype levels absent per Sample (not shown in that Sample panel):")
+  for (s in names(miss_list)[has_missing]) {
+    cat(sprintf("  %s: %s\n", s, paste(miss_list[[s]], collapse = ", ")))
+  }
+}
+
+# D) Columns (Sample|Subtype) that ended up all zeros after masking (optional)
+all_zero_cols <- colnames(mat)[colSums(abs(mat), na.rm = TRUE) == 0]
+if (length(all_zero_cols)) {
+  message("Columns with all zero mean scores after masking (appear blank):")
+  print(all_zero_cols)
+}
+
+# ------------ 5) SCALE? (absolute vs relative) ------------
+if (scale_rows) {
+  mat <- t(scale(t(mat)))
+  mat[is.na(mat)] <- 0
+  col_fun <- colorRamp2(c(-3, 0, 3), c("#2c7bb6","white","#d7191c"))
+  legend_title <- "TF (z)"
+} else {
+  # symmetric, robust limits
+  q <- quantile(mat, c(0.01, 0.99), na.rm = TRUE); lim <- max(abs(q))
+  col_fun <- colorRamp2(c(-lim, 0, lim), c("#2c7bb6","white","#d7191c"))
+  legend_title <- "TF activity"
+}
+
+# optional bolding for “headline” TFs
+#bold_tfs <- intersect(c("MYC","POU5F1","SOX2","NANOG","PRDM14","TFCP2L1","ESRRB","KLF4"), rownames(mat))
+#row_gp <- grid::gpar(fontface = ifelse(rownames(mat) %in% bold_tfs, "bold", "plain"))
+
+# ------------ 6) DRAW HEATMAP (SPLIT BY SAMPLE) ------------
+ht <- Heatmap(
+  mat,
+  name = legend_title,
+  col = col_fun,
+  column_split = col_df$Sample,     # <-- split by SCT sample
+  top_annotation = ha_top,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  border = FALSE,
+  na_col = "grey90",
+  #row_names_gp = row_gp,
+  column_names_gp = grid::gpar(fontsize = 8),
+  row_title = NULL, column_title = NULL
+)
+
+draw(ht, show_heatmap_legend = TRUE, show_annotation_legend = FALSE)
+
+# ------------ 7) SAVE ------------
+# pdf("TFactivity_ULM_bySample_Subtype.pdf", width = 9, height = 10, useDingbats = FALSE)
+# draw(ht)
+# dev.off()
+
+```
+
+```{r}
+# --- Focused immune footprints (Fig R6A) ---
+immune_levels <- c("mac","infl_mac","t_cell","nkt","mast")
+tfs_focus     <- c("NANOG","SOX2","POU5F1","KLF4")
+
+keep_cols <- col_df$Subtype %in% immune_levels
+mat_i     <- mat[intersect(rownames(mat), tfs_focus), keep_cols, drop = FALSE]
+col_i     <- col_df[keep_cols, , drop = FALSE]
+
+ha_top_i <- HeatmapAnnotation(
+    Sample         = col_i$Sample,
+    `Solid/Cystic` = factor(col_i$SolidCystic, levels = names(pal_solidcystic)),
+    Subtype        = col_i$Subtype,
+    col = list(Sample = pal_samples, `Solid/Cystic` = pal_solidcystic, Subtype = pal1),
+    simple_anno_size = grid::unit(3.5, "mm")
+)
+
+ht_i <- Heatmap(
+    mat_i, name = "TF (z)", col = colorRamp2(c(-3,0,3), c("#2c7bb6","white","#d7191c")),
+    column_split = col_i$Sample, top_annotation = ha_top_i,
+    cluster_rows = TRUE, cluster_columns = FALSE, border = FALSE,
+    na_col = "grey90", column_names_gp = grid::gpar(fontsize = 15)
+)
+draw(ht_i, show_heatmap_legend = TRUE, show_annotation_legend = FALSE)
+
+
+```
+
+```{r}
+library(dplyr); library(ggplot2); library(tibble)
+
+# Per-cell POU5F1 activity (BH-masked) joined with RNA expression
+act_pou5 <- acts %>%
+  filter(source == "POU5F1") %>%
+  group_by(source) %>% mutate(p_adj = p.adjust(p_value, "BH")) %>% ungroup() %>%
+  transmute(cell = condition, pou5_ulm = score, sig = p_adj < 0.05)
+
+expr_pou5 <- tibble(
+  cell = colnames(nucSamples),
+  pou5_expr = as.numeric(GetAssayData(nucSamples, assay = "RNA", layer = "data")["POU5F1", ])
+)
+
+df_oct4epi <- nucSamples@meta.data %>%
+  rownames_to_column("cell") %>%
+  select(cell, Sample = orig.ident, Subtype = HiResNamedOrdered) %>%
+  left_join(expr_pou5, by = "cell") %>%
+  left_join(act_pou5,  by = "cell") %>%
+  filter(Subtype == "OCT4+_epi")
+
+# Panel 1: expression vs activity scatter in OCT4+_epi
+p_scatter <- ggplot(df_oct4epi, aes(x = pou5_expr, y = pou5_ulm, color = Sample)) +
+  geom_point(alpha = 0.6, size = 0.9) +
+  geom_smooth(method = "lm", se = FALSE) +
+  scale_color_manual(values = pal_samples) +
+  labs(x = "POU5F1 expression (log-normalized)", y = "POU5F1 activity (ULM z)",
+       title = "OCT4+_epi: high POU5F1 mRNA, modest/variable activity") +
+  theme_classic(base_size = 11)
+
+# Panel 2: fraction BH-significant in OCT4+_epi vs non-OCT4+_epi
+df_all <- nucSamples@meta.data %>%
+  rownames_to_column("cell") %>%
+  select(cell, Subtype = HiResNamedOrdered) %>%
+  mutate(group = ifelse(Subtype == "OCT4+_epi", "OCT4+_epi", "Other")) %>%
+  left_join(act_pou5 %>% select(cell, sig), by = "cell")
+
+frac_df <- df_all %>%
+  group_by(group) %>%
+  summarise(frac_sig = mean(sig, na.rm = TRUE), n = n(), .groups = "drop")
+
+p_bar <- ggplot(frac_df, aes(group, frac_sig, fill = group)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = scales::percent(frac_sig, accuracy = 0.1)), vjust = -0.3, size = 3.2) +
+  scale_fill_manual(values = c("OCT4+_epi" = pal1["OCT4+_epi"], "Other" = "grey70")) +
+  ylim(0, 1) +
+  labs(x = NULL, y = "Fraction BH-significant (POU5F1 ULM)", title = "Significant activity is not enriched in OCT4+_epi") +
+  theme_classic(base_size = 11) + theme(legend.position = "none")
+
+p_scatter; p_bar
+
+```
+
+```{r}
+# --- Focused epithelial footprints (Fig R6A, epithelial only) ---
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+epi_levels <- c("enterochromaffin","BPIFB1+_epi","OCT4+_epi","LGR5+_epi","cilia_epi","cycl_epi")
+tfs_focus  <- c("NANOG","SOX2","POU5F1","KLF4")
+
+# subset columns (Sample | Subtype) to epithelial subtypes
+keep_cols <- col_df$Subtype %in% epi_levels
+mat_e     <- mat[intersect(rownames(mat), tfs_focus), keep_cols, drop = FALSE]
+col_e     <- col_df[keep_cols, , drop = FALSE]
+
+# make sure palettes cover exactly the levels present
+# Sample
+lvls_sample <- levels(factor(col_e$Sample))
+pal_samples_use <- pal_samples[lvls_sample]
+if (anyNA(pal_samples_use)) {
+  miss <- is.na(pal_samples_use)
+  pal_samples_use[miss] <- scales::hue_pal()(sum(miss))
+}
+names(pal_samples_use) <- lvls_sample
+
+# Solid/Cystic
+col_e$SolidCystic <- factor(col_e$SolidCystic, levels = names(pal_solidcystic))
+lvls_sc <- levels(col_e$SolidCystic)
+pal_sc_use <- pal_solidcystic[lvls_sc]; names(pal_sc_use) <- lvls_sc
+
+# Subtype (epithelial only)
+col_e$Subtype <- factor(col_e$Subtype, levels = epi_levels)
+pal1_use <- pal1[epi_levels]
+if (anyNA(pal1_use)) {
+  pal1_use[is.na(pal1_use)] <- "#BBBBBB"
+}
+names(pal1_use) <- epi_levels
+
+# top annotation
+ha_top_e <- HeatmapAnnotation(
+  Sample         = col_e$Sample,
+  `Solid/Cystic` = col_e$SolidCystic,
+  Subtype        = col_e$Subtype,
+  col = list(
+    Sample         = pal_samples_use,
+    `Solid/Cystic` = pal_sc_use,
+    Subtype        = pal1_use
+  ),
+  simple_anno_size = grid::unit(3.5, "mm")
+)
+
+# draw heatmap (split by Sample)
+ht_e <- Heatmap(
+  mat_e,
+  name = "TF (z)",
+  col  = circlize::colorRamp2(c(-3, 0, 3), c("#2c7bb6", "white", "#d7191c")),
+  column_split    = col_e$Sample,
+  top_annotation  = ha_top_e,
+  cluster_rows    = TRUE,
+  cluster_columns = FALSE,
+  border          = FALSE,
+  na_col          = "grey90",
+  column_names_gp = grid::gpar(fontsize = 15)
+)
+
+draw(ht_e, show_heatmap_legend = TRUE, show_annotation_legend = FALSE)
+
+
+```
+
+
+
+```{r}
+# ---------------- SETTINGS ----------------
+n_tfs         <- 100                       # top N TFs by variability
+sample_col    <- "orig.ident"              # SCT sample column
+broad_col     <- "BroadCategory"           # USE BroadCategory instead of HiResNamedOrdered
+solidcyst_col <- "SolidCystic"             # solid/cystic per sample (already linked)
+mask_nonsig   <- TRUE                      # mask non-significant TF×cell scores
+fdr_cut       <- 0.05                      # BH cutoff
+scale_rows    <- TRUE                     # TRUE => z-score per TF across columns
+
+# Desired BroadCategory order (columns within each Sample)
+broad_levels <- c("Epithelia","Stroma","Endothelia","Immune","Neuroectoderm")
+
+# Optional Sample order (panels)
+sample_order <- c("SCT02","SCT06","SCT09","SCT01","SCT03","SCT10")
+
+# ---------------- 1) SIGNIFICANCE MASK (BH per TF) ----------------
+acts_sel <- acts %>%
+  group_by(source) %>%
+  mutate(p_adj = p.adjust(p_value, method = "BH")) %>%
+  ungroup()
+
+acts_use <- if (mask_nonsig) {
+  acts_sel %>% mutate(score_use = ifelse(p_adj < fdr_cut, score, NA_real_))
+} else {
+  acts_sel %>% mutate(score_use = score)
+}
+
+# ---------------- 2) JOIN METADATA ----------------
+meta <- nucSamples@meta.data %>%
+  tibble::rownames_to_column("condition") %>%
+  dplyr::select(
+    condition,
+    Sample       = all_of(sample_col),
+    Broad        = all_of(broad_col),
+    SolidCystic  = all_of(solidcyst_col)
+  )
+
+acts_joined <- acts_use %>%
+  dplyr::left_join(meta, by = "condition") %>%
+  dplyr::filter(!is.na(Sample), !is.na(Broad))
+
+# ---------------- 3) AGGREGATE: mean per (Sample × Broad × TF) ----------------
+agg <- acts_joined %>%
+  dplyr::group_by(source, Sample, Broad) %>%
+  dplyr::summarise(mean_score = mean(score_use, na.rm = TRUE),
+                   n_sig = sum(!is.na(score_use)),
+                   .groups = "drop")
+
+# If masking, optionally drop triplets with zero significant cells
+if (mask_nonsig) {
+  agg <- agg %>% dplyr::filter(n_sig > 0)
+}
+
+# ---------------- 4) PICK TOP N TFs BY VARIANCE ----------------
+tmp_mat <- agg %>%
+  dplyr::mutate(col_key = paste(Sample, Broad, sep = " | ")) %>%
+  dplyr::select(source, col_key, mean_score) %>%
+  tidyr::pivot_wider(id_cols = source, names_from = col_key, values_from = mean_score) %>%
+  tibble::column_to_rownames("source") %>%
+  as.matrix()
+
+tf_order <- sort(apply(tmp_mat, 1, sd, na.rm = TRUE), decreasing = TRUE)
+tfs_keep <- names(tf_order)[seq_len(min(n_tfs, length(tf_order)))]
+
+# ---------------- 5) FINAL MATRIX: rows=top TFs, cols=(Sample | Broad) ----------------
+mat <- agg %>%
+  dplyr::filter(source %in% tfs_keep) %>%
+  dplyr::mutate(col_key = paste(Sample, Broad, sep = " | ")) %>%
+  dplyr::select(source, col_key, mean_score) %>%
+  tidyr::pivot_wider(id_cols = source, names_from = col_key, values_from = mean_score, values_fill = 0) %>%
+  tibble::column_to_rownames("source") %>%
+  as.matrix()
+
+# ---------------- 6) COLUMN ANNOTATIONS ----------------
+col_df <- tibble(col_key = colnames(mat)) %>%
+  tidyr::separate(col_key, into = c("Sample","Broad"), sep = " \\| ", remove = FALSE) %>%
+  dplyr::left_join(meta %>% dplyr::distinct(Sample, SolidCystic), by = "Sample")
+
+# order factors
+col_df$Broad  <- factor(col_df$Broad, levels = broad_levels)
+col_df$Sample <- factor(col_df$Sample, levels = sample_order)
+
+# order columns by Sample, then Broad
+ord   <- order(col_df$Sample, col_df$Broad, na.last = TRUE)
+mat   <- mat[, ord, drop = FALSE]
+col_df <- col_df[ord, , drop = FALSE]
+
+# ---------------- 7) COLORS & TOP ANNOTATION ----------------
+# Broad palette: ensure full coverage and align to factor order
+broad_colors <- pal_broad
+miss_broad <- setdiff(levels(col_df$Broad), names(broad_colors))
+if (length(miss_broad)) {
+  broad_colors <- c(broad_colors, setNames(rep("#BBBBBB", length(miss_broad)), miss_broad))
+}
+broad_colors <- broad_colors[levels(col_df$Broad)]
+
+# Sample palette (if not already defined)
+if (!exists("pal_samples")) {
+  if (requireNamespace("scales", quietly = TRUE)) {
+    pal_samples <- setNames(scales::hue_pal()(length(levels(col_df$Sample))), levels(col_df$Sample))
+  } else {
+    pal_samples <- setNames(rainbow(length(levels(col_df$Sample))), levels(col_df$Sample))
+  }
+}
+
+# Solid/Cystic factor to match your palette keys
+col_df$SolidCystic <- factor(col_df$SolidCystic, levels = names(pal_solidcystic))
+
+ha_top <- HeatmapAnnotation(
+  Sample         = col_df$Sample,
+  `Solid/Cystic` = col_df$SolidCystic,
+  Broad          = col_df$Broad,
+  col = list(
+    Sample         = pal_samples,        # remove if you don't want a Sample bar
+    `Solid/Cystic` = pal_solidcystic,     # e.g., c(solid="#696969", cystic="#D3D3D3")
+    Broad          = broad_colors
+  ),
+  simple_anno_size = grid::unit(4, "mm")
+)
+
+# ---------------- 8) SCALE? (absolute vs relative) ----------------
+if (scale_rows) {
+  mat <- t(scale(t(mat))); mat[is.na(mat)] <- 0
+  col_fun <- circlize::colorRamp2(c(-3, 0, 3), c("#2c7bb6","white","#d7191c"))
+  legend_title <- "TF (z)"
+} else {
+  q <- stats::quantile(mat, c(0.01, 0.99), na.rm = TRUE); lim <- max(abs(q))
+  col_fun <- circlize::colorRamp2(c(-lim, 0, lim), c("#2c7bb6","white","#d7191c"))
+  legend_title <- "TF activity"
+}
+
+# optional emphasis: bold key TFs if present
+headline <- intersect(c("POU5F1","SOX2","NANOG","PRDM14","TFCP2L1","ESRRB","KLF4","MYC"), rownames(mat))
+row_gp <- grid::gpar(fontface = ifelse(rownames(mat) %in% headline, "bold", "plain"), fontsize = 8)
+
+# ---------------- 9) DRAW ----------------
+ht <- Heatmap(
+  mat,
+  name = legend_title,
+  col = col_fun,
+  column_split = col_df$Sample,      # panels per SCT sample
+  top_annotation = ha_top,
+  cluster_rows = TRUE,
+  cluster_columns = TRUE,            # set FALSE to keep strict order within sample
+  border = FALSE,
+  na_col = "grey90",
+  row_names_gp = row_gp,
+  column_names_gp = grid::gpar(fontsize = 8),
+  row_title = NULL, column_title = NULL
+)
+draw(ht)
+
+# ---------------- 10) (Optional) SAVE ----------------
+# pdf("TFactivity_ULM_TOP100_bySample_Broad.pdf", width = 10, height = 10, useDingbats = FALSE)
+# draw(ht)
+# dev.off()
+```
+
+# Pluripotency genes 
+
+```{r}
+# ---- UCell for the exact MSigDB sets you listed ----
+suppressPackageStartupMessages({ library(UCell); library(msigdbr); library(dplyr) })
+
+# If you already created `gene_sets <- msigdbr(...)` earlier, you can skip this line
+gene_sets <- msigdbr(species = "Homo sapiens")
+
+selected_stem_cell_gene_sets <- c(
+  "BHATTACHARYA_EMBRYONIC_STEM_CELL",
+  "MIKKELSEN_PARTIALLY_REPROGRAMMED_TO_PLURIPOTENCY",
+  "MIKKELSEN_PLURIPOTENT_STATE_UP",
+  "REACTOME_TRANSCRIPTIONAL_REGULATION_OF_PLURIPOTENT_STEM_CELLS",
+  "WONG_EMBRYONIC_STEM_CELL_CORE",
+  "WP_EMBRYONIC_STEM_CELL_PLURIPOTENCY_PATHWAYS",
+  "WP_WNT_SIGNALING_PATHWAY_AND_PLURIPOTENCY",
+  "GOBP_MESENCHYMAL_STEM_CELL_PROLIFERATION",
+  "CONRAD_STEM_CELL",
+  "GOBP_POSITIVE_REGULATION_OF_STEM_CELL_DIFFERENTIATION",
+  "GOBP_REGULATION_OF_STEM_CELL_DIFFERENTIATION",
+  "GOBP_STEM_CELL_PROLIFERATION"
+)
+
+# Build features list for UCell (unique symbols per set)
+ucell_gene_lists <- lapply(selected_stem_cell_gene_sets, function(gs) {
+  unique(gene_sets$gene_symbol[gene_sets$gs_name == gs])
+})
+names(ucell_gene_lists) <- selected_stem_cell_gene_sets
+
+# Add UCell scores (columns will be "<setname>_UCell" in meta.data)
+nucSamples <- AddModuleScore_UCell(nucSamples, features = ucell_gene_lists)
+
+```
+
+
+```{r}
+
+# Columns that now exist in meta.data
+score_cols <- paste0(selected_stem_cell_gene_sets, "_UCell")
+
+# Summarize mean UCell per Sample × Subtype for each gene set
+ucell_long <- nucSamples@meta.data %>%
+  tibble::rownames_to_column("cell") %>%
+  dplyr::select(
+    cell,
+    Sample  = orig.ident,
+    Subtype = HiResNamedOrdered,
+    dplyr::all_of(score_cols)
+  ) %>%
+  tidyr::pivot_longer(
+    cols = dplyr::all_of(score_cols),
+    names_to = "GeneSet",
+    values_to = "UCell"
+  ) %>%
+  dplyr::mutate(GeneSet = sub("_UCell$", "", GeneSet)) %>%
+  dplyr::group_by(GeneSet, Sample, Subtype) %>%
+  dplyr::summarise(mean_ucell = mean(UCell, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(col_key = paste(Sample, Subtype, sep = " | "))
+
+# Matrix: rows = gene sets, cols = "Sample | Subtype"
+mat_ucell <- ucell_long %>%
+  dplyr::select(GeneSet, col_key, mean_ucell) %>%
+  tidyr::pivot_wider(
+    id_cols = GeneSet,
+    names_from = col_key,
+    values_from = mean_ucell,
+    values_fill = 0
+  ) %>%
+  tibble::column_to_rownames("GeneSet") %>%
+  as.matrix()
+
+# Column annotations (Sample, Subtype, Solid/Cystic)
+col_df <- tibble::tibble(col_key = colnames(mat_ucell)) %>%
+  tidyr::separate(col_key, into = c("Sample","Subtype"), sep = " \\| ", remove = FALSE) %>%
+  dplyr::left_join(
+    nucSamples@meta.data %>%
+      dplyr::select(Sample = orig.ident, SolidCystic) %>%
+      dplyr::distinct(),
+    by = "Sample"
+  )
+
+# Optional: enforce your preferred orders if you’ve defined them
+# (subtype_levels should match your desired order; sample_order as before)
+if (exists("subtype_levels")) col_df$Subtype <- factor(col_df$Subtype, levels = subtype_levels)
+if (exists("sample_order"))  col_df$Sample  <- factor(col_df$Sample,  levels = sample_order)
+
+# Order columns by Sample, then Subtype
+ord <- order(col_df$Sample, col_df$Subtype, na.last = TRUE)
+mat_ucell <- mat_ucell[, ord, drop = FALSE]
+col_df    <- col_df[ord, , drop = FALSE]
+
+# Colors: use your palettes
+# Ensure pal1 covers all subtypes present
+missing_subtypes <- setdiff(levels(factor(col_df$Subtype)), names(pal1))
+if (length(missing_subtypes)) {
+  pal1 <- c(pal1, stats::setNames(rep("#BBBBBB", length(missing_subtypes)), missing_subtypes))
+}
+# Solid/Cystic factor to match keys
+col_df$SolidCystic <- factor(col_df$SolidCystic, levels = names(pal_solidcystic))
+
+ha_top_ucell <- HeatmapAnnotation(
+  Sample         = col_df$Sample,
+  `Solid/Cystic` = col_df$SolidCystic,
+  Subtype        = col_df$Subtype,
+  col = list(
+    Sample         = pal_samples,
+    `Solid/Cystic` = pal_solidcystic,
+    Subtype        = pal1
+  ),
+  simple_anno_size = grid::unit(4, "mm")
+)
+
+# Color scale for UCell (robust midpoint)
+q <- stats::quantile(mat_ucell, c(0.01, 0.50, 0.99), na.rm = TRUE)
+# Color scale: magma from dark (0) → light (1)
+col_fun_ucell <- circlize::colorRamp2(
+  seq(0, 1, length.out = 100),
+  magma(100)
+)
+
+# Wrap long row names for readability (optional)
+rownames(mat_ucell) <- str_wrap(gsub("_", " ", rownames(mat_ucell)), width = 15)
+
+ht_ucell <- Heatmap(
+  mat_ucell,
+  name = "UCell",
+  col = col_fun_ucell,
+  column_split   = col_df$Sample,   # split panels by Sample
+  top_annotation = ha_top_ucell,
+  cluster_rows   = TRUE,
+  cluster_columns= TRUE,           # keep Sample/Subtype order
+  border         = FALSE,
+  na_col         = "grey90",
+  row_names_gp   = grid::gpar(fontsize = 8),
+  column_names_gp= grid::gpar(fontsize = 7),
+  row_title      = NULL, column_title = NULL
+)
+
+draw(ht_ucell, show_heatmap_legend = TRUE, show_annotation_legend = FALSE)
+
+# (Optional) save
+# pdf("figures/20250403_Figure4_PGCandPluripotentGeneExpression/UCell_Stemness_bySample_Subtype.pdf",
+#     width = 12, height = 10, useDingbats = FALSE)
+# draw(ht_ucell)
+# dev.off()
+
+
+```
+

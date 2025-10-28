@@ -1,0 +1,535 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(patchwork)
+library(scCustomize) 
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(scRNAseq)
+library(Seurat)
+library(CHOIR)
+
+color_use <- DiscretePalette_scCustomize(
+  60,
+  palette = 'varibow',
+  shuffle_pal = T,
+  seed = 12
+)
+
+```
+
+
+```{r}
+samples_list <- readRDS(file = "data/20240517_SCTsamplesSplit_DGE_Clustering/SamplesList_SCTlistThatCreatedObjects.rds")
+# Set the idents for HIRES
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.4"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.2"
+```
+
+
+```{r}
+
+# Rename identities for each sample
+samples_list[["SCT01"]] <- RenameIdents(object = samples_list[["SCT01"]], 
+                      '0' = "Fibro",
+                      '1' = "SmMusc",
+                      '2' = "Imm",
+                      '3' = "Endo",
+                      '4' = "Imm_T_NKT",
+                      '5' = "Unk_SCT01-5",
+                      '6' = "Astrocyte?",
+                      '7' = "Unk_SCT01-7",
+                      '8' = "Schwann?")
+
+samples_list[["SCT01n"]] <- RenameIdents(object = samples_list[["SCT01n"]], 
+                       '0' = "Epi",
+                       '1' = "Endo",
+                       '2' = "Fibro",
+                       '3' = "Imm")
+
+samples_list[["SCT02"]] <- RenameIdents(object = samples_list[["SCT02"]], 
+                      '0' = "Fibro",
+                      '1' = "Unk_SCT02-1",
+                      '2' = "Epi",
+                      '3' = "SmMusc",
+                      '4' = "Endo",
+                      '5' = "Epi",
+                      '6' = "Cycling",
+                      '7' = "Imm_Mac",
+                      '8' = "Unk_SCT02-8",
+                      '9' = "Unk_SCT02-9",
+                      '10' = "Astrocyte?",
+                      '11' = "SmMusc",
+                      '12' = "Chromaffin",
+                      '13' = "LymphEndo",
+                      '14' = "Epi",
+                      '15' = "Cilia_Epi",
+                      '16' = "Imm_Mast")
+
+samples_list[["SCT03"]] <- RenameIdents(object = samples_list[["SCT03"]], 
+                      '0' = "Fibro",
+                      '1' = "Fibro",
+                      '2' = "Endo",
+                      '3' = "Endo",
+                      '4' = "Imm_Mac",
+                      '5' = "SmMusc",
+                      '6' = "Cycling",
+                      '7' = "Neuron",
+                      '8' = "Imm_T_NKT",
+                      '9' = "LymphEndo",
+                      '10' = "Cycling",
+                      '11' = "Unk_SCT03-11",
+                      '12' = "Imm_Mast")
+
+samples_list[["SCT06"]] <- RenameIdents(object = samples_list[["SCT06"]], 
+                      '0' = "Fibro",
+                      '1' = "Unk_SCT06-1",
+                      '2' = "Epi_Hindgut",
+                      '3' = "Imm_Mac",
+                      '4' = "Epi_Foregut",
+                      '5' = "Endo",
+                      '6' = "Cilia_Epi",
+                      '7' = "SmMusc",
+                      '8' = "Unk_SCT06-8",
+                      '9' = "Oligo?",
+                      '10' = "Chromaffin",
+                      '11' = "Neuron",
+                      '12' = "Oligo",
+                      '13' = "Imm_T_NKT",
+                      '14' = "Imm_Mast",
+                      '15' = "LymphEndo",
+                      '16' = "Astrocyte?",
+                      '17' = "Cycling",
+                      '18' = "SmMusc",
+                      '19' = "SkMusc?")
+
+samples_list[["SCT09"]] <- RenameIdents(object = samples_list[["SCT09"]], 
+                      '0' = "Endo",
+                      '1' = "Epi",
+                      '2' = "Fibro",
+                      '3' = "SmMusc",
+                      '4' = "Endo",
+                      '5' = "SkMusc?",
+                      '6' = "Cilia_Epi",
+                      '7' = "Astrocyte?",
+                      '8' = "Endo",
+                      '9' = "Cycling",
+                      '10' = "Imm_Mac",
+                      '11' = "LymphEndo")
+
+samples_list[["SCT10"]] <- RenameIdents(object = samples_list[["SCT10"]], 
+                      '0' = "Unk_SCT10-0",
+                      '1' = "Endo",
+                      '2' = "Fibro",
+                      '3' = "Chromaffin",
+                      '4' = "Cycling",
+                      '5' = "Unk_SCT10-5",
+                      '6' = "Epi_Hindgut",
+                      '7' = "Imm_T_NKT",
+                      '8' = "Imm_Mac",
+                      '9' = "SmMusc",
+                      '10' = "Imm_Mac",
+                      '11' = "Imm_T_NKT",
+                      '12' = "Epi")
+
+# Add the identities as a new column in the metadata
+for (sample_name in names(samples_list)) {
+  samples_list[[sample_name]]$short_check <- Idents(samples_list[[sample_name]])
+}
+
+```
+
+```{r}
+pdf("figures/20240522_SplitSCT_CheckingCellTypes/SplitUMAPS_CheckingShortNames_HiRes.pdf", width = 24, height = 14)
+for (sample_name in names(samples_list)) {
+  current_seurat_object <- samples_list[[sample_name]]
+  plot <- DimPlot_scCustom(current_seurat_object, reduction = "umap", group.by = c("short_check"), label = T, colors_use = color_use, repel = T, label.box = T)
+  print(plot)
+}
+dev.off()
+```
+
+
+
+```{r}
+# Set the identities based on RNA_snn_res
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.4"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.2"
+
+for (sample_name in names(samples_list)) {
+  samples_list[[sample_name]]$HiRes <- Idents(samples_list[[sample_name]])
+}
+
+
+```
+
+
+```{r}
+# Rename identities for each sample
+samples_list[["SCT01"]] <- RenameIdents(object = samples_list[["SCT01"]], 
+                      '0' = "Fibroblast",
+                      '1' = "SmoothMusc_Pericyte",
+                      '2' = "Immune",
+                      '3' = "Endothelia",
+                      '4' = "T-Cell_NKT",
+                      '5' = "SCT01_Cl5_Unk",
+                      '6' = "Astrocyte?_NeuralProg?_SCT01_Cl6",
+                      '7' = "SCT01_Cl7_Fibro?",
+                      '8' = "Neuro_Schwann?_SCT01_Cl8")
+
+samples_list[["SCT01n"]] <- RenameIdents(object = samples_list[["SCT01n"]], 
+                       '0' = "Epithelia",
+                       '1' = "Endothelia",
+                       '2' = "Fibroblast",
+                       '3' = "Immune")
+
+samples_list[["SCT02"]] <- RenameIdents(object = samples_list[["SCT02"]], 
+                      '0' = "Fibroblast",
+                      '1' = "SCT02_Cl1_Unk_Chondro?Epi?",
+                      '2' = "Epithelia",
+                      '3' = "SmoothMusc_Pericyte",
+                      '4' = "Endothelia",
+                      '5' = "Epithelia",
+                      '6' = "Cycling",
+                      '7' = "Immune_Macrophage",
+                      '8' = "SCT02_Cl8_Unk_Cilia?Neuron?",
+                      '9' = "SCT02_Cl9_Unk_GobletEpi?Cycling?",
+                      '10' = "Astrocyte?_NeuralProg?_SCT02_Cl10",
+                      '11' = "SmoothMusc_Pericyte",
+                      '12' = "Eterochromaffin",
+                      '13' = "LymphaticEndothelia",
+                      '14' = "Epithelia",
+                      '15' = "Ciliated_Epithela",
+                      '16' = "Immune_MastCell")
+
+samples_list[["SCT03"]] <- RenameIdents(object = samples_list[["SCT03"]], 
+                      '0' = "Fibroblast",
+                      '1' = "Fibroblast",
+                      '2' = "Endothelia",
+                      '3' = "Endothelia",
+                      '4' = "Immune_Macrophage",
+                      '5' = "SmoothMusc_Pericyte",
+                      '6' = "Cycling",
+                      '7' = "EarlyNeurons",
+                      '8' = "T-Cell_NKT",
+                      '9' = "LymphaticEndothelia",
+                      '10' = "Cycling",
+                      '11' = "SCT03_Cl11_Unk_Adipo?Cycling?",
+                      '12' = "Immune_MastCell")
+
+samples_list[["SCT06"]] <- RenameIdents(object = samples_list[["SCT06"]], 
+                      '0' = "Fibroblast",
+                      '1' = "SCT06_Cl1_Unk_RadialGlia?Astro?",
+                      '2' = "Epithelia_Goblet",
+                      '3' = "Immune_Macrophage",
+                      '4' = "Epithelia_Airway?",
+                      '5' = "Endothelia",
+                      '6' = "Ciliated_Epithela",
+                      '7' = "SmoothMusc_Pericyte",
+                      '8' = "SCT06_Cl8_Unk",
+                      '9' = "Oligo?_SCT06_cl9",
+                      '10' = "Eterochromaffin",
+                      '11' = "EarlyNeurons",
+                      '12' = "Oligodendrocyte",
+                      '13' = "T-Cell_NKT",
+                      '14' = "Immune_MastCell",
+                      '15' = "LymphaticEndothelia",
+                      '16' = "Astrocyte?_NeuralProg?_SCT06_Cl16",
+                      '17' = "Cycling",
+                      '18' = "SmoothMusc_Pericyte",
+                      '19' = "SkeletalMuscle_CardiacMuscle")
+
+samples_list[["SCT09"]] <- RenameIdents(object = samples_list[["SCT09"]], 
+                      '0' = "Endothelia",
+                      '1' = "Epithelia",
+                      '2' = "Fibroblast",
+                      '3' = "SmoothMusc_Pericyte",
+                      '4' = "Endothelia",
+                      '5' = "SkeletalMuscle_CardiacMuscle",
+                      '6' = "Ciliated_Epithela",
+                      '7' = "Astrocyte?_NeuralProg?_SCT09_Cl17",
+                      '8' = "Endothelia",
+                      '9' = "Cycling",
+                      '10' = "Immune_Macrophage",
+                      '11' = "LymphaticEndothelia")
+
+samples_list[["SCT10"]] <- RenameIdents(object = samples_list[["SCT10"]], 
+                      '0' = "SCT10_Cl0_Unk_Fibro?Astro?",
+                      '1' = "Endothelia",
+                      '2' = "Fibroblast",
+                      '3' = "Eterochromaffin",
+                      '4' = "Cycling",
+                      '5' = "SCT10_Cl5_Epi?",
+                      '6' = "Epithelia_Goblet",
+                      '7' = "T-Cell_NKT",
+                      '8' = "Immune_Macrophage",
+                      '9' = "SmoothMusc_Pericyte",
+                      '10' = "Immune_Macrophage",
+                      '11' = "T-Cell_NKT",
+                      '12' = "Epithelia")
+
+# Add the identities as a new column in the metadata
+for (sample_name in names(samples_list)) {
+  samples_list[[sample_name]]$long_check <- Idents(samples_list[[sample_name]])
+}
+
+```
+
+```{r}
+pdf("figures/20240522_SplitSCT_CheckingCellTypes/SplitUMAPS_CheckingLongNames_HiRes.pdf", width = 24, height = 14)
+for (sample_name in names(samples_list)) {
+  current_seurat_object <- samples_list[[sample_name]]
+  plot <- DimPlot_scCustom(current_seurat_object, reduction = "umap", group.by = c("long_check"), label = T, colors_use = color_use, repel = T, label.box = T)
+  print(plot)
+}
+dev.off()
+```
+
+```{r}
+# Set the identities based on RNA_snn_res
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.1"
+
+for (sample_name in names(samples_list)) {
+  samples_list[[sample_name]]$LoRes <- Idents(samples_list[[sample_name]])
+}
+```
+
+
+
+# Checking Cell Markers 
+## SCT01
+```{r}
+## Cluster 5
+FeaturePlot_scCustom(samples_list[["SCT01"]], features = c("XIST", "RORA"))
+FeaturePlot_scCustom(samples_list[["SCT01"]], features = c("COL15A1"), order = T)
+
+#Cluster 6
+FeaturePlot_scCustom(samples_list[["SCT01"]], features = c("COL15A1", "PLP1", "MBP"), order = T)
+
+FeaturePlot_scCustom(samples_list[["SCT02"]], features = c("AQP4", "GFAP", "PLP1", "MBP"), order = T)
+
+FeaturePlot_scCustom(samples_list[["SCT03"]], features = c("MKI67", "COL15A1", "XIST"), order = T)
+
+FeaturePlot_scCustom(samples_list[["SCT09"]], features = c("GFAP", "EPCAM", "SOX2"), order = T)
+
+```
+
+
+
+
+```{r}
+Idents(samples_list[["SCT01"]]) <- "HiRes"
+Idents(samples_list[["SCT02"]]) <- "HiRes"
+Idents(samples_list[["SCT03"]]) <- "HiRes"
+Idents(samples_list[["SCT01n"]]) <- "HiRes"
+Idents(samples_list[["SCT06"]]) <- "HiRes"
+Idents(samples_list[["SCT09"]]) <- "HiRes"
+Idents(samples_list[["SCT10"]]) <- "HiRes"
+```
+
+
+```{r}
+# Rename identities for each sample
+samples_list[["SCT01"]] <- RenameIdents(object = samples_list[["SCT01"]], 
+                      '0' = "Fibro",
+                      '1' = "SmMusc",
+                      '2' = "Imm_Mac",
+                      '3' = "Endo",
+                      '4' = "Imm_T_NKT",
+                      '5' = "Fibro_s1-c5",
+                      '6' = "Glial",
+                      '7' = "Fibro_s1-c7",
+                      '8' = "Schwann?")
+
+samples_list[["SCT01n"]] <- RenameIdents(object = samples_list[["SCT01n"]], 
+                       '0' = "Epi",
+                       '1' = "Endo",
+                       '2' = "Fibro",
+                       '3' = "Imm")
+
+samples_list[["SCT02"]] <- RenameIdents(object = samples_list[["SCT02"]], 
+                      '0' = "Fibro",
+                      '1' = "Epi_s2c1",
+                      '2' = "Epi",
+                      '3' = "SmMusc",
+                      '4' = "Endo",
+                      '5' = "Epi",
+                      '6' = "Cycling",
+                      '7' = "Imm_Mac",
+                      '8' = "Neuron_s2c8",
+                      '9' = "Epi_s2c9",
+                      '10' = "Astrocyte",
+                      '11' = "SmMusc",
+                      '12' = "Chromaffin",
+                      '13' = "LymphEndo",
+                      '14' = "Epi",
+                      '15' = "Cilia_Epi",
+                      '16' = "Imm_Mast")
+
+samples_list[["SCT03"]] <- RenameIdents(object = samples_list[["SCT03"]], 
+                      '0' = "Fibro",
+                      '1' = "Fibro",
+                      '2' = "Endo",
+                      '3' = "Endo",
+                      '4' = "Imm_Mac",
+                      '5' = "SmMusc",
+                      '6' = "Cycling",
+                      '7' = "Neuron",
+                      '8' = "Imm_T_NKT",
+                      '9' = "LymphEndo",
+                      '10' = "Cycling",
+                      '11' = "Adipo",
+                      '12' = "Imm_Mast")
+
+samples_list[["SCT06"]] <- RenameIdents(object = samples_list[["SCT06"]], 
+                      '0' = "Fibro",
+                      '1' = "Astrocyte_s6c1",
+                      '2' = "Epi_Hindgut",
+                      '3' = "Imm_Mac",
+                      '4' = "Epi_Foregut",
+                      '5' = "Endo",
+                      '6' = "Cilia_Epi",
+                      '7' = "SmMusc",
+                      '8' = "Cilia_Epi",
+                      '9' = "Oligo_s6c9",
+                      '10' = "Chromaffin",
+                      '11' = "Neuron",
+                      '12' = "Oligo",
+                      '13' = "Imm_T_NKT",
+                      '14' = "Imm_Mast",
+                      '15' = "LymphEndo",
+                      '16' = "Astrocyte_s6c16",
+                      '17' = "Cycling",
+                      '18' = "SmMusc",
+                      '19' = "SkMusc")
+
+samples_list[["SCT09"]] <- RenameIdents(object = samples_list[["SCT09"]], 
+                      '0' = "Endo",
+                      '1' = "Epi",
+                      '2' = "Fibro",
+                      '3' = "SmMusc",
+                      '4' = "Endo",
+                      '5' = "SkMusc",
+                      '6' = "Cilia_Epi",
+                      '7' = "Astrocyte",
+                      '8' = "Endo",
+                      '9' = "SatelliteCell",
+                      '10' = "Imm_Mac",
+                      '11' = "LymphEndo")
+
+samples_list[["SCT10"]] <- RenameIdents(object = samples_list[["SCT10"]], 
+                      '0' = "Epi_s10c0",
+                      '1' = "Endo",
+                      '2' = "Fibro",
+                      '3' = "Chromaffin",
+                      '4' = "Cycling",
+                      '5' = "Epi_s10c5",
+                      '6' = "Epi_Hindgut",
+                      '7' = "Imm_T_NKT",
+                      '8' = "Imm_Mac",
+                      '9' = "SmMusc",
+                      '10' = "Imm_Mac",
+                      '11' = "Imm_T_NKT",
+                      '12' = "Epi")
+
+# Add the identities as a new column in the metadata
+for (sample_name in names(samples_list)) {
+  samples_list[[sample_name]]$finalname <- Idents(samples_list[[sample_name]])
+}
+```
+
+# Remove extraneous cell metadata 
+
+```{r}
+# Function to remove specified columns from the metadata of a Seurat object
+remove_columns <- function(seurat_obj, patterns) {
+  # Get the names of all columns in the metadata
+  metadata_cols <- colnames(seurat_obj@meta.data)
+  
+  # Identify columns to be removed based on the provided patterns
+  cols_to_remove <- metadata_cols[grepl(paste(patterns, collapse = "|"), metadata_cols)]
+  
+  # Remove the identified columns
+  seurat_obj@meta.data <- seurat_obj@meta.data[, !(colnames(seurat_obj@meta.data) %in% cols_to_remove)]
+  
+  return(seurat_obj)
+}
+
+# List of patterns for columns to be removed
+patterns_to_remove <- c("RNA_snn_res", "pANN", "DF.class", "scDblFinder.class", "seurat.clusters")
+
+# Apply the function to each sample in the samples_list
+for (sample_name in names(samples_list)) {
+  samples_list[[sample_name]] <- remove_columns(samples_list[[sample_name]], patterns_to_remove)
+}
+
+# Verify the columns have been removed
+for (sample_name in names(samples_list)) {
+  print(colnames(samples_list[[sample_name]]@meta.data))
+}
+
+```
+
+```{r}
+saveRDS(samples_list, file = "data/20240522_SplitSCT_CheckingCellTypes/samples_list_Split_Named_metadataClean.rds")
+```
+
+```{r}
+
+allSamples <- merge(
+  x = samples_list[["SCT01"]], 
+  y = c(
+    samples_list[["SCT02"]], 
+    samples_list[["SCT03"]], 
+    samples_list[["SCT01n"]], 
+    samples_list[["SCT06"]], 
+    samples_list[["SCT09"]], 
+    samples_list[["SCT10"]]
+  ), 
+  add.cell.id = c("SCT01", "SCT02", "SCT03", "SCT01n", "SCT06", "SCT09", "SCT10")
+)
+
+metadata <- allSamples@meta.data
+
+saveRDS(metadata, file = "data/20240522_SplitSCT_CheckingCellTypes/MetaDataForAllClusters.rds")
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# Filter out names that don't match the cells in nucSamples
+all_named_clusters <- all_named_clusters[names(all_named_clusters) %in% rownames(nucSamples@meta.data)]
+
+# Use AddMetaData to add the consolidated named cluster information to nucSamples
+nucSamples <- AddMetaData(object = nucSamples, metadata = metadata$finalname, col.name = "NamedMixedClusters")
+```
+
+
+```{r}
+sessionInfo()
+```
+
+

@@ -1,0 +1,228 @@
+---
+title: "Creating the SoupX counts matrix by default "
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+{ library(Seurat)
+  library(tidyverse)
+  library(Matrix)
+  library(scales)
+  library(cowplot)
+  library(RCurl)
+  #library(Matrix.utils) #
+  library(clustree)
+  library(ComplexHeatmap) 
+  library(readxl)
+  #library(EnhancedVolcano) #
+  library(BiocManager)
+  #library(AnnotationHub) #
+  library(SoupX)
+  library(scCustomize)
+}
+```
+
+# SoupX - Create counts matrix 
+## Loading the 10X data and creating a normalized SoupX dataframe
+I use the default parameters on the SoupX website to make our raw counts matrix to a SoupX corrected matrix that can be used for the rest of the analyses. 
+
+See the SoupX Github for details (https://github.com/constantAmateur/SoupX)
+
+```{r}
+sc.SCT01 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT01/outs/')
+sc.SCT01 = autoEstCont(sc.SCT01)
+out.SCT01 = adjustCounts(sc.SCT01)
+
+sc.SCT02 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT02/outs/')
+sc.SCT02 = autoEstCont(sc.SCT02)
+out.SCT02 = adjustCounts(sc.SCT02)
+
+sc.SCT03 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT03/outs/')
+sc.SCT03 = autoEstCont(sc.SCT03)
+out.SCT03 = adjustCounts(sc.SCT03)
+
+sc.NT01 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/NT01/outs/')
+sc.NT01 = autoEstCont(sc.NT01)
+out.NT01 = adjustCounts(sc.NT01)
+
+sc.SCT01n = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT01_nuc/outs/')
+sc.SCT01n = autoEstCont(sc.SCT01n)
+out.SCT01n = adjustCounts(sc.SCT01n)
+
+sc.SCT06 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT06/outs/')
+sc.SCT06 = autoEstCont(sc.SCT06)
+out.SCT06 = adjustCounts(sc.SCT06)
+
+sc.SCT09 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT09/outs/')
+sc.SCT09 = autoEstCont(sc.SCT09)
+out.SCT09 = adjustCounts(sc.SCT09)
+
+sc.SCT10 = load10X('/mnt/newusb/rojas/scrna/cellranger_outs/SCT10/outs/')
+sc.SCT10 = autoEstCont(sc.SCT10)
+out.SCT10 = adjustCounts(sc.SCT10)
+
+
+#print the head to make sure the counts matrices look ok
+head(c(out.NT01, out.SCT01, out.SCT02, out.SCT03, out.SCT01n, out.SCT06))
+
+```
+# Placing the SoupX counts into the 10X data
+## Load 10X counts raw matrix
+I start by loading the 10X raw data and placing it into a SeuratObject called [SampleName]_raw.
+
+```{r}
+SCT01_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT01/outs/filtered_feature_bc_matrix')
+SCT01_raw <- CreateSeuratObject(counts = SCT01_10X, project="SCT01", min.features = 100)
+
+SCT02_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT02/outs/filtered_feature_bc_matrix/')
+SCT02_raw <- CreateSeuratObject(counts = SCT02_10X, project="SCT02", min.features = 100)
+
+SCT03_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT03/outs/filtered_feature_bc_matrix/')
+SCT03_raw <- CreateSeuratObject(counts = SCT03_10X, project="SCT03", min.features = 100)
+
+NT01_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/NT01/outs/filtered_feature_bc_matrix/')
+NT01_raw <- CreateSeuratObject(counts = NT01_10X, project="NT01", min.features = 100)
+
+SCT01n_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT01_nuc/outs/filtered_feature_bc_matrix/')
+SCT01n_raw <- CreateSeuratObject(counts = SCT01n_10X, project="SCT01n", min.features = 100)
+
+SCT06_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT06/outs/filtered_feature_bc_matrix/')
+SCT06_raw <- CreateSeuratObject(counts = SCT06_10X, project="SCT06", min.features = 100)
+
+SCT09_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT09/outs/filtered_feature_bc_matrix/')
+SCT09_raw <- CreateSeuratObject(counts = SCT09_10X, project="SCT09", min.features = 100)
+
+SCT10_10X <- Read10X(data.dir = '/mnt/newusb/rojas/scrna/cellranger_outs/SCT10/outs/filtered_feature_bc_matrix/')
+SCT10_raw <- CreateSeuratObject(counts = SCT10_10X, project="SCT10", min.features = 100)
+```
+
+
+# Add SoupX to the counts slot and keep raw data 
+Then I update the counts slot by moving the raw counts to SampleName_raw[["og.counts"]] slot and place our SoupX outs in the SampleName_raw@assays$RNA@counts slot
+
+
+```{r}
+SCT01_raw[["og.counts"]] <- CreateAssayObject(counts = SCT01_raw@assays$RNA$counts)
+SCT01_raw@assays$RNA$counts <- out.SCT01
+
+SCT02_raw[["og.counts"]] <- CreateAssayObject(counts = SCT02_raw@assays$RNA$counts)
+SCT02_raw@assays$RNA$counts <- out.SCT02
+
+SCT03_raw[["og.counts"]] <- CreateAssayObject(counts = SCT03_raw@assays$RNA$counts)
+SCT03_raw@assays$RNA$counts <- out.SCT03
+
+NT01_raw[["og.counts"]] <- CreateAssayObject(counts = NT01_raw@assays$RNA$counts)
+NT01_raw@assays$RNA$counts <- out.NT01
+
+SCT01n_raw[["og.counts"]] <- CreateAssayObject(counts = SCT01n_raw@assays$RNA$counts)
+SCT01n_raw@assays$RNA$counts <- out.SCT01n
+
+SCT06_raw[["og.counts"]] <- CreateAssayObject(counts = SCT06_raw@assays$RNA$counts)
+SCT06_raw@assays$RNA$counts <- out.SCT06
+
+SCT09_raw[["og.counts"]] <- CreateAssayObject(counts = SCT09_raw@assays$RNA$counts)
+SCT09_raw@assays$RNA$counts <- out.SCT09
+
+SCT10_raw[["og.counts"]] <- CreateAssayObject(counts = SCT10_raw@assays$RNA$counts)
+SCT10_raw@assays$RNA$counts <- out.SCT10
+```
+
+
+## Checking the output of the counts matrix
+We can then check how many reads were removed from the counts. I am just calculating here the ratio that remained 
+
+```{r}
+# Update these numbers on 5/16/24
+sum(SCT01_raw@assays$RNA$counts)/sum(SCT01_raw@assays$og.counts$counts) #3.29%  (5/28/23) 3.3% (11/28/23) 3.4% (5/17/24) removed
+sum(SCT02_raw@assays$RNA$counts)/sum(SCT02_raw@assays$og.counts@counts) #12.40% (5/28/23) 12.4% (11/28/23) 12.4% (5/17/24) removed
+sum(SCT03_raw@assays$RNA$counts)/sum(SCT03_raw@assays$og.counts@counts) #25.60% (5/28/23) 25.6% (11/28/23) removed
+sum(NT01_raw@assays$RNA$counts)/sum(NT01_raw@assays$og.counts@counts) #27.18% (5/28/23) 27.21% (11/28/23) 25.6% (5/17/24) removed
+sum(SCT01n_raw@assays$RNA$counts)/sum(SCT01n_raw@assays$og.counts@counts) # 2.6% (11/28/23) removed 27.2%
+sum(SCT06_raw@assays$RNA$counts)/sum(SCT06_raw@assays$og.counts@counts) # 13.6% (11/28/23) removed
+sum(SCT09_raw@assays$RNA$counts)/sum(SCT09_raw@assays$og.counts@counts) # ____% (11/28/23) removed
+sum(SCT10_raw@assays$RNA$counts)/sum(SCT10_raw@assays$og.counts@counts) # ____% (11/28/23) removed
+
+```
+# QC for the counts in the new slot 
+
+```{r}
+#SCT01
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT01_raw[["percent.mt"]] <- PercentageFeatureSet(SCT01_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT01_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3) 
+
+#SCT02
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT02_raw[["percent.mt"]] <- PercentageFeatureSet(SCT02_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT02_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3)
+
+#SCT03
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT03_raw[["percent.mt"]] <- PercentageFeatureSet(SCT03_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT03_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3)
+
+#NT01
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+NT01_raw[["percent.mt"]] <- PercentageFeatureSet(NT01_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(NT01_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3)
+
+#SCT01n
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT01n_raw[["percent.mt"]] <- PercentageFeatureSet(SCT01n_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT01n_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3) 
+
+#SCT06
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT06_raw[["percent.mt"]] <- PercentageFeatureSet(SCT06_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT06_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3) 
+
+#SCT09
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT09_raw[["percent.mt"]] <- PercentageFeatureSet(SCT09_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT09_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3) 
+
+#SCT10
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+SCT10_raw[["percent.mt"]] <- PercentageFeatureSet(SCT10_raw, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(SCT10_raw, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),pt.size=0, ncol = 3) 
+```
+
+
+
+# Saving RDS files and the Session Info
+
+```{r}
+#Save RDS Files for the SoupXcorrected
+saveRDS(SCT01_raw, file = "data/SCT01_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(SCT02_raw, file = "data/SCT02_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(SCT03_raw, file = "data/SCT03_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(NT01_raw, file = "data/NT01_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(SCT01n_raw, file = "data/SCT01n_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(SCT06_raw, file = "data/SCT06_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(SCT09_raw, file = "data/SCT09_rawSeurat_SoupXcorrected-20231128.rds")
+saveRDS(SCT10_raw, file = "data/SCT10_rawSeurat_SoupXcorrected-20231128.rds")
+
+```
+#Session Info
+```{r}
+sessionInfo()
+
+```

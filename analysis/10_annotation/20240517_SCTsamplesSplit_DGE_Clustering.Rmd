@@ -1,0 +1,462 @@
+---
+title: "Filtering the single cell and nuclear RNAseq - doublets, gene level low counts, and low quality cells"
+output: html_notebook
+
+---
+
+# Integration of all the cells since they are single nuclei
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+{ library(Seurat)
+  library(tidyverse)
+  library(Matrix)
+  library(scales)
+  library(cowplot)
+  library(RCurl)
+  #library(Matrix.utils) #
+  library(clustree)
+  library(ComplexHeatmap) 
+  library(readxl)
+  #library(EnhancedVolcano) #
+  library(BiocManager)
+  #library(AnnotationHub) #
+  library(SoupX)
+  library(scCustomize)
+  library(DoubletFinder)
+}
+#choose your directory
+subfolder_name <- "20240118_ClusteringDGE_MitoRemoved"
+data_path <- "data/"
+fig_path <- "figures/"
+
+# Convenience functions
+SaveFigure <- function(plots, name, type = "png", width, height, res){
+  if(type == "png") {
+    png(paste0(fig_path, subfolder_name, name, ".", type),
+      width = width, height = height, units = "in", res = 200)
+  } else {
+    pdf(paste0(fig_path,subfolder_name, name, ".", type),
+      width = width, height = height)
+}
+print(plots)
+dev.off()
+}
+
+SaveObject <- function(object, name){
+  saveRDS(object, paste0(data_path, name, ".RDS"))
+}
+
+ReadObject <- function(name){
+  readRDS(paste0(data_path, name, ".RDS"))
+}
+```
+
+Load in the data
+
+```{r}
+SCT01 <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+SCT02 <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT02_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+SCT03 <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT03_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+SCT01n <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01n_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+SCT06 <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT06_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+SCT09 <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT09_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+SCT10 <- readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT10_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+```
+
+First we need to filter out the genes that are low expressed and the MT reads out as well. 
+
+```{r}
+geneLevelFiltering <- function(seurat_obj, remove_mito = TRUE) {
+    # Extract counts
+    counts <- GetAssayData(object = seurat_obj, layer = "counts")
+    
+    # Determine nonzero counts
+    nonzero <- counts > 0
+    
+    # Determine genes to keep based on nonzero expression in at least 10 cells
+    keep_genes <- rowSums(nonzero) >= 10
+    
+    # Optional: Remove mitochondrial genes
+    if (remove_mito) {
+        # Identify mitochondrial genes (assuming they start with "MT-")
+        mito_genes <- grep("^MT-", rownames(counts), value = TRUE)
+        
+        # Exclude mitochondrial genes from the list of genes to keep
+        keep_genes <- keep_genes & !rownames(counts) %in% mito_genes
+    }
+    
+    # Filter counts for genes to keep
+    filtered_counts <- counts[keep_genes, ]
+    
+    # Create a new Seurat object with filtered genes
+    filtered_seurat_tmp <- CreateSeuratObject(counts = filtered_counts, meta.data = seurat_obj@meta.data)
+    
+    return(filtered_seurat_tmp)
+}
+```
+
+```{r}
+SCT01 <- geneLevelFiltering(SCT01 , remove_mito = F)
+SCT02 <- geneLevelFiltering(SCT02 , remove_mito = TRUE)
+SCT03 <- geneLevelFiltering(SCT03 , remove_mito = TRUE)
+SCT01n <- geneLevelFiltering(SCT01n , remove_mito = TRUE)
+SCT06 <- geneLevelFiltering(SCT06 , remove_mito = TRUE)
+SCT09 <- geneLevelFiltering(SCT09 , remove_mito = TRUE)
+SCT10 <- geneLevelFiltering(SCT10 , remove_mito = TRUE)
+
+# saveRDS(SCT01 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01_singlets_filtered_geneLevelFiltered_MT-NOTremoved_SoupXcorrected_20240517.rds")
+# saveRDS(SCT02 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT02_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+# saveRDS(SCT03 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT03_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+# saveRDS(SCT01n , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01n_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+# saveRDS(SCT06 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT06_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+# saveRDS(SCT09 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT09_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+# saveRDS(SCT10 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT10_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+
+```
+
+
+
+```{r}
+
+# Create a named list of Seurat objects
+samples_list <- list(SCT01 = SCT01, SCT02 = SCT02, SCT03 = SCT03, SCT01n = SCT01n, SCT06 = SCT06, SCT09 = SCT09, SCT10 = SCT10)
+
+# Define a named vector with the number of dimensions for each sample
+dims_to_use <- c(SCT01 = 20, SCT02 = 21, SCT03 = 19, SCT01n = 22, SCT06 = 23, SCT09 = 20, SCT10 = 22) # Update these numbers as needed
+
+# Define your color palette
+color_use <- DiscretePalette_scCustomize(
+  70,
+  palette = 'varibow',
+  shuffle_pal = TRUE,
+  seed = 12
+)
+
+
+# Pre-processing and analysis
+for (i in seq_along(samples_list)) {
+  sample <- samples_list[[i]]
+  sample_name <- names(samples_list)[i]
+  
+  sample <- NormalizeData(sample, normalization.method = "LogNormalize", scale.factor = 10000) %>%
+    FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>%
+    ScaleData() %>%
+    RunPCA(npcs = 60)
+  
+  # Save ElbowPlot
+  pdf_name <- paste0("figures/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_ElbowPlot.pdf")
+  pdf(file = pdf_name)
+  p = ElbowPlot(sample, ndims = 60) + geom_vline(xintercept=dims_to_use[sample_name], linetype="dotted")
+  print(p)
+  dev.off()
+  
+  # Find the right clustering resolution and create clustree
+  sample <- FindNeighbors(sample, dims = 1:dims_to_use[sample_name])
+  sample <- FindClusters(sample, resolution = seq(0.1, 2, by = 0.1))
+  
+  pdf_name <- paste0("figures/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_clustree.pdf")
+  pdf(file = pdf_name, width = 20, height = 30)
+  p = clustree(sample, layout = "sugiyama", prefix = "RNA_snn_res.") + 
+    labs(title = paste0(sample_name, " Clustree")) +
+    theme(plot.title = element_text(hjust = 0.5))
+  print(p)
+  dev.off()
+  
+  # Run UMAP
+  sample <- RunUMAP(sample, dims = 1:dims_to_use[sample_name])
+  
+  # Get all resolution columns for UMAP
+  group_by_cols <- sort(grep("RNA_snn_res.", colnames(sample@meta.data), value = TRUE))
+  
+  # Save UMAP
+  pdf_name <- paste0("figures/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_UMAPs.pdf")
+  pdf(file = pdf_name, width = 14)
+  p = DimPlot_scCustom(sample, reduction = "umap", combine = F, label.size = 2, group.by = group_by_cols, label = TRUE, colors_use = color_use)
+  print(p)
+  dev.off()
+  
+  # Update the list with processed sample
+  samples_list[[i]] <- sample
+}
+
+rm(sample_name, sample, pdf_name, p)
+```
+
+
+Look at the QC with the UMAPS
+```{r}
+qc_features <- c(
+  "nCount_RNA", "nFeature_RNA", "percent_mito", "percent_ribo", "percent_mito_ribo", 
+  "log10GenesPerUMI", "percent_top50", "percent_oxphos", "percent_apop", "percent_dna_repair", "percent_ieg"
+)
+for (i in seq_along(samples_list)) {
+  #pick the sample and the name for naming 
+  sample <- samples_list[[i]]
+  sample_name <- names(samples_list)[i]
+  #make a figure to print
+  pdf_name <- paste0("figures/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_QC_onUMAP.pdf")
+  pdf(file = pdf_name, width = 16)
+  #make a featureplot object
+  p <- FeaturePlot_scCustom(sample, features = qc_features, reduction = "umap", num_columns = 4)
+  print(p)
+  dev.off()
+  
+}
+```
+
+
+ 
+```{r}
+# Assuming you have samples_list and sample_names as before
+# Define the resolutions for each sample (adjust as needed)
+
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.4"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.2"
+
+#this is for use in the naming. Make sure this matches above #dont get rid of resolutions it is used later.
+resolutions <- c(SCT01 = "RNA_snn_res.0.2", 
+                 SCT02 = "RNA_snn_res.0.3", 
+                 SCT03 = "RNA_snn_res.0.2", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.4",
+                 SCT09 = "RNA_snn_res.0.3",
+                 SCT10 = "RNA_snn_res.0.2")
+
+# Initialize a list to store marker results
+markers_list <- list()
+
+# Loop through each sample to find markers
+for (sample_name in names(samples_list)) {
+  sample <- samples_list[[sample_name]]
+  
+  # Find markers
+  markers <- FindAllMarkers(object = sample, only.pos = TRUE, logfc.threshold = 0.25)
+  
+  #arrange in order
+  markers <- arrange(markers, cluster, p_val_adj, desc(avg_log2FC))
+  
+  # Store the results in the list
+  markers_list[[sample_name]] <- markers
+  
+  # Save markers to an RDS file
+  file_name <- paste0("data/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_allMarkers_HiRes_", resolutions[sample_name], " _20240517.rds")
+  saveRDS(object = markers, file = file_name)
+}
+saveRDS(object = markers_list, file = "data/20240517_SCTsamplesSplit_DGE_Clustering/ListOfAllSamples_allMarkers_HiRes_20240517.rds")
+rm(sample, file_name, markers)  #dont get rid of resolutions it is used later.
+
+```
+
+
+#Running the markers into a top 50 ranking
+
+```{r}
+# start by loading our annotation files
+annotations <- read.csv("/mnt/DATA/LairdLab/rojas/data/annotation.csv")
+
+# Loop through each element in markers_list
+for (sample_name in names(markers_list)) {
+  # Access the dataframe of markers for each sample
+  markers <- markers_list[[sample_name]]
+
+  # Join with annotations and rearrange columns
+  markers.ann <- inner_join(x = markers, 
+                            y = annotations[, c("gene_name", "description")],
+                            by = c("gene" = "gene_name")) %>%
+    unique() %>%
+    arrange(cluster, p_val_adj, desc(avg_log2FC)) %>%
+    filter(avg_log2FC > 1)
+
+  # Rearrange the columns as per your specification
+  # Adjust the column indices as needed based on the structure of your data
+  markers.ann <- markers.ann[ , c(6, 7, 2:4, 1, 5, 8)]
+
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_annotatedMarkers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(markers.ann, output_file, row.names = FALSE)
+  
+  #make top 10 
+  top10 <- markers.ann %>%
+    group_by(cluster) %>%
+    slice_head(n = 10) %>%
+    ungroup()
+  
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Top10-Markers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(top10, output_file, row.names = FALSE)
+  
+  #make top 50 
+  top50 <- markers.ann %>%
+    group_by(cluster) %>%
+    slice_head(n = 50) %>%
+    ungroup()
+    
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Top50-Markers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(top50, output_file, row.names = FALSE)
+  
+  #make top 50 
+  top30 <- markers.ann %>%
+    group_by(cluster) %>%
+    slice_head(n = 30) %>%
+    ungroup()
+    
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Top30-Markers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(top30, output_file, row.names = FALSE)
+}
+rm(markers, markers.ann, annotations, output_file, top10, top50, top30)
+```
+
+```{r}
+# Assuming you have samples_list and sample_names as before
+# Define the resolutions for each sample (adjust as needed)
+
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.1"
+
+#this is for use in the naming. Make sure this matches above #dont get rid of resolutions it is used later.
+resolutions <- c(SCT01 = "RNA_snn_res.0.1", 
+                 SCT02 = "RNA_snn_res.0.1", 
+                 SCT03 = "RNA_snn_res.0.1", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.1",
+                 SCT09 = "RNA_snn_res.0.1",
+                 SCT10 = "RNA_snn_res.0.1")
+
+# Initialize a list to store marker results
+markers_list <- list()
+
+# Loop through each sample to find markers
+for (sample_name in names(samples_list)) {
+  sample <- samples_list[[sample_name]]
+  
+  # Find markers
+  markers <- FindAllMarkers(object = sample, only.pos = TRUE, logfc.threshold = 0.25)
+  
+  #arrange in order
+  markers <- arrange(markers, cluster, p_val_adj, desc(avg_log2FC))
+  
+  # Store the results in the list
+  markers_list[[sample_name]] <- markers
+  
+  # Save markers to an RDS file
+  file_name <- paste0("data/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_allMarkers_LoRes_", resolutions[sample_name], " _20240517.rds")
+  saveRDS(object = markers, file = file_name)
+}
+saveRDS(object = markers_list, file = "data/20240517_SCTsamplesSplit_DGE_Clustering/ListOfAllSamples_allMarkers_LoRes_20240517.rds")
+rm(sample, file_name, markers)  #dont get rid of resolutions it is used later.
+
+```
+
+
+#Running the markers into a top 50 ranking
+
+```{r}
+# start by loading our annotation files
+annotations <- read.csv("/mnt/DATA/LairdLab/rojas/data/annotation.csv")
+
+# Loop through each element in markers_list
+for (sample_name in names(markers_list)) {
+  # Access the dataframe of markers for each sample
+  markers <- markers_list[[sample_name]]
+
+  # Join with annotations and rearrange columns
+  markers.ann <- inner_join(x = markers, 
+                            y = annotations[, c("gene_name", "description")],
+                            by = c("gene" = "gene_name")) %>%
+    unique() %>%
+    arrange(cluster, p_val_adj, desc(avg_log2FC)) %>%
+    filter(avg_log2FC > 1)
+
+  # Rearrange the columns as per your specification
+  # Adjust the column indices as needed based on the structure of your data
+  markers.ann <- markers.ann[ , c(6, 7, 2:4, 1, 5, 8)]
+
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_annotatedMarkers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(markers.ann, output_file, row.names = FALSE)
+  
+  #make top 10 
+  top10 <- markers.ann %>%
+    group_by(cluster) %>%
+    slice_head(n = 10) %>%
+    ungroup()
+  
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Top10-Markers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(top10, output_file, row.names = FALSE)
+  
+  #make top 50 
+  top50 <- markers.ann %>%
+    group_by(cluster) %>%
+    slice_head(n = 50) %>%
+    ungroup()
+    
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Top50-Markers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(top50, output_file, row.names = FALSE)
+  
+  #make top 50 
+  top30 <- markers.ann %>%
+    group_by(cluster) %>%
+    slice_head(n = 30) %>%
+    ungroup()
+    
+  # Define the output file path
+  output_file <- paste0("results/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Top30-Markers_filteredAvgFCgreater1_", resolutions[sample_name], " _20240517.csv")
+
+  # Save the dataframe to a CSV file
+  write.csv(top30, output_file, row.names = FALSE)
+}
+rm(markers, markers.ann, annotations, output_file, top10, top50, top30)
+```
+
+
+
+
+
+
+
+#save pre-processed Seurat Object
+
+```{r}
+for (sample_name in names(samples_list)) {
+  file_name <- paste0("data/20240517_SCTsamplesSplit_DGE_Clustering/", sample_name, "_Pre-Processed_", resolutions[sample_name], "_SeuratObj_20240516.rds")
+  saveRDS(object = samples_list[[sample_name]], file = file_name)
+}
+
+saveRDS(samples_list, file = "data/20240517_SCTsamplesSplit_DGE_Clustering/SamplesList_SCTlistThatCreatedObjects.rds")
+```
+
+
+```{r}
+sessionInfo()
+```
+

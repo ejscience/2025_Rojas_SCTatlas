@@ -1,0 +1,432 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(Azimuth)
+library(SeuratData)
+library(patchwork)
+library(scCustomize)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+
+
+```
+# Load in data
+This is the data from the making of split SCT samples. Each one will be looped to check their named cell types
+
+
+```{r eval=FALSE, include=FALSE}
+datapath <- "/mnt/DATA/LairdLab/rojas/SCT_01to06_allAnalyses_GitCloned/data/20240118-2_MTremoved_Split-DGE_SCT01to06/"
+
+# Assuming 'datapath' is already defined and points to the correct directory
+SCT01 <- readRDS(paste0(datapath, "SCT01_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+SCT01n <- readRDS(paste0(datapath, "SCT01n_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+SCT02 <- readRDS(paste0(datapath, "SCT02_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+SCT03 <- readRDS(paste0(datapath, "SCT03_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+SCT06 <- readRDS(paste0(datapath, "SCT06_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+SCT09 <- readRDS(paste0(datapath, "SCT09_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+SCT10 <- readRDS(paste0(datapath, "SCT10_Pre-Processed_RNA_snn_res.0.X_SeuratObj_20240516.rds.rds"))
+
+```
+# Run Azimuth
+I ran azimuth on the samples and used the Fetal Cell atlas for the reference 
+
+```{r}
+# Create a list of Seurat objects
+samples <- readRDS(file = "data/20240517_SCTsamplesSplit_DGE_Clustering/SamplesList_SCTlistThatCreatedObjects.rds")
+
+
+# Run RunAzimuth on each sample
+for (sample_name in names(samples)) {
+  cat("Running Azimuth for", sample_name, "\n")
+  samples[[sample_name]] <- RunAzimuth(samples[[sample_name]], reference = "fetusref")
+}
+```
+
+### saving the RDS
+
+```{r}
+# Loop over each sample in the 'samples' list
+for (sample_name in names(samples)) {
+  # Extract the Seurat object from the list
+  seurat_object <- samples[[sample_name]]
+  
+  # Extract the relevant metadata columns
+  metadata <- seurat_object@meta.data[, c("predicted.annotation.l1.score", "predicted.annotation.l1",
+                                          "predicted.annotation.l2.score", "predicted.annotation.l2",
+                                          "predicted.organ.score", "predicted.organ", "mapping.score")]
+  
+  # Construct a file name based on the sample name
+  file_name <- paste0("data/20240518-1_AzimuthNaming/",sample_name, "_azimuth_metadata.rds")
+  
+  # Save the metadata to an RDS file
+  saveRDS(metadata, file = file_name)
+  
+  # Print a message indicating completion
+  cat("Saved Azimuth results for", sample_name, "to", file_name, "\n")
+}
+ 
+
+# At this point, each Seurat object in 'samples' has been processed with RunAzimuth
+
+```
+
+
+# Looking at the results
+## UMAP of the clusters that have been annotated
+Now we can look at the data and see that there is a level 1 of our data and we can see that the cell types can be named. 
+
+```{r}
+# Run DimPlot
+pdf("figures/20240518-1_AzimuthNaming/UMAPSwithAnnotatedNames.pdf", width = 14)
+for (sample_name in names(samples)) {
+  cat("Running Azimuth for", sample_name, "\n")
+  p <- DimPlot_scCustom(samples[[sample_name]], colors_use = color_use, group.by = "predicted.annotation.l1", label = TRUE, repel = TRUE) + 
+    NoLegend() + 
+    labs(title=paste(sample_name, "Predicted Annotation from Fetal Reference"))
+  print(p) 
+}
+for (sample_name in names(samples)) {
+  cat("Running Azimuth for", sample_name, "\n")
+  p <- DimPlot_scCustom(samples[[sample_name]], colors_use = color_use, group.by = "predicted.organ", label = TRUE, repel = TRUE) + 
+    NoLegend() + 
+    labs(title=paste(sample_name, "Predicted Organ from Fetal Reference"))
+  print(p) 
+}
+dev.off()
+
+```
+
+## BarPlots of the makeups of the clusters I considered with Resolutions below flipping. 
+
+```{r}
+# Define your color palette
+color_use <- DiscretePalette_scCustomize(
+  70,
+  palette = 'varibow',
+  shuffle_pal = TRUE,
+  seed = 12
+)
+
+
+df <- samples[["SCT01"]]@meta.data %>%
+  group_by(RNA_snn_res.0.7, predicted.annotation.l1) %>%
+  summarize(count = n()) %>%
+  mutate(total = sum(count),
+         percentage = count / total * 100) %>%
+  ungroup()
+
+ggplot(df, aes(x=RNA_snn_res.0.7, y=percentage, fill=predicted.annotation.l1)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=color_use) + # Use this to set your custom colors
+  labs(title="Composition of RNA_snn_res.0.7 based on predicted.annotation.l1 (%)",
+       x="CCA Clusters Low",
+       y="Percentage") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  theme_minimal()
+```
+
+
+```{r}
+#### Making a function
+
+# Define the function to analyze a sample, allowing for different resolutions
+analyze_sample <- function(seurat_object, color_use, sample_name, resolution_column) {
+  # Ensure that the resolution column exists in the metadata
+  if (!resolution_column %in% names(seurat_object@meta.data)) {
+    stop(paste("The resolution column", resolution_column, "does not exist in the metadata of the Seurat object for", sample_name))
+  }
+  
+  # Calculate the count and percentage for each resolution and predicted.annotation.l1 combination
+  df <- seurat_object@meta.data %>%
+    dplyr::group_by_at(vars(resolution_column, "predicted.annotation.l1")) %>%
+    dplyr::summarize(count = n(), .groups = 'drop') %>%
+    # Calculate the total count for each resolution
+    dplyr::group_by_at(vars(resolution_column)) %>%
+    # Calculate the percentage for each predicted.annotation.l1 within each resolution
+    dplyr::mutate(percentage = count / sum(count) * 100) %>%
+    dplyr::ungroup()
+
+  # Generate the plot, using the sample name and specified resolution in the title, without the legend
+  p <- ggplot(df, aes_string(x=resolution_column, y="percentage", fill="predicted.annotation.l1")) +
+    geom_bar(stat="identity", position="stack") +
+    scale_fill_manual(values=color_use) +
+    labs(title=paste("Composition of", resolution_column, "in", sample_name, "based on predicted.annotation.l1 (%)"),
+         x=paste(resolution_column, "Clusters"),
+         y="Percentage") +
+    scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  return(p)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Define a named vector or list that maps sample names to resolution column names
+resolutions <- c(SCT01 = "RNA_snn_res.0.2", 
+                 SCT02 = "RNA_snn_res.0.3", 
+                 SCT03 = "RNA_snn_res.0.2", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.4",
+                 SCT09 = "RNA_snn_res.0.3",
+                 SCT10 = "RNA_snn_res.0.2") #replace with your resolutions
+
+
+# Prepare lists to store plots and legends
+plot_list <- list()
+legend_list <- list()
+
+# Loop over each sample and apply the function with the appropriate resolution
+for (sample_name in names(samples)) {
+  print(sample_name)
+  resolution_column <- resolutions[sample_name]
+  plot <- analyze_sample(samples[[sample_name]], color_use, sample_name, resolution_column)
+  
+  # Extract the legend
+  legend <- ggplotGrob(plot + theme(legend.position = "bottom"))$grobs[[which(sapply(ggplotGrob(plot + theme(legend.position = "bottom"))$grobs, function(x) x$name) == "guide-box")]]
+  
+  plot_list[[sample_name]] <- plot
+  legend_list[[sample_name]] <- legend
+}
+
+# Save plots and legends to separate PDF files
+pdf("figures/20240518-1_AzimuthNaming/BarPlots_noLegend_HiRes.pdf", width = 11, height = 20)
+grid.arrange(grobs = plot_list, ncol = 1)
+dev.off()
+
+pdf("figures/20240518-1_AzimuthNaming/BarPlots_onlyLegends_HiRes.pdf", width = 20, height = 30)
+grid.arrange(grobs = legend_list, ncol = 1)
+dev.off()
+
+
+
+```
+
+# Table with these information
+
+```{r}
+resolutions <- c(SCT01 = "RNA_snn_res.0.2", 
+                 SCT02 = "RNA_snn_res.0.3", 
+                 SCT03 = "RNA_snn_res.0.2", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.4",
+                 SCT09 = "RNA_snn_res.0.3",
+                 SCT10 = "RNA_snn_res.0.2")
+
+azimuth_tables <- list()
+
+# Making the tables for further analyses
+generate_table <- function(seurat_obj, cluster_col, predicted_col, score_col) {
+  
+  # Use the .data pronoun to enable string input for dplyr functions
+  df <- seurat_obj@meta.data %>%
+    dplyr::select(.data[[cluster_col]], .data[[predicted_col]], .data[[score_col]]) %>%
+    dplyr::group_by(.data[[cluster_col]], .data[[predicted_col]]) %>%
+    dplyr::summarize(
+      Count = n(),
+      AverageScore = mean(.data[[score_col]], na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    dplyr::group_by(.data[[cluster_col]]) %>%
+    dplyr::mutate(Percentage = Count / sum(Count) * 100) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(.data[[cluster_col]], desc(Percentage))
+  
+  return(df)
+}
+
+# Now, when calling the function within the loop, include the score column as well
+for (sample_name in names(samples)) {
+  # Retrieve the correct resolution column for the current sample
+  cluster_col <- resolutions[sample_name]
+  
+  # Generate the table with the average scores
+  azimuth_tables[[sample_name]] <- generate_table(samples[[sample_name]], cluster_col, "predicted.annotation.l1", "predicted.annotation.l1.score")
+  
+  # Optionally, you can also save each table to an RDS file
+  #saveRDS(azimuth_tables[[sample_name]], file = paste0("results/20240518-1_AzimuthNaming/",sample_name, "_azimuth_table.rds"))
+  write_csv(azimuth_tables[[sample_name]], file = paste0("results/20240518-1_AzimuthNaming/",sample_name, "_azimuth_table_HiRes.csv"))
+}
+```
+
+
+```{r}
+# Making only the top2 table
+top_two_rows_tables <- list()
+
+# Loop over each sample and create the top two rows table
+for (sample_name in names(azimuth_tables)) {
+  # Extract the dataframe for the current sample
+  df <- azimuth_tables[[sample_name]]
+  
+  # Identify the cluster column name
+  cluster_col_name <- resolutions[sample_name]
+
+  # Assuming you want the top two rows based on the highest percentage
+  top_rows_df <- df %>%
+    dplyr::group_by(!!sym(cluster_col_name)) %>%
+    dplyr::slice_max(order_by = Percentage, n = 2) %>%
+    dplyr::ungroup()
+  
+  # Store the result in the list
+  top_two_rows_tables[[sample_name]] <- top_rows_df
+  
+  # Optionally, you can also save each table to an RDS file
+   write_csv(top_two_rows_tables[[sample_name]], file = paste0("results/20240518-1_AzimuthNaming/",sample_name, "_azimuth_Top2-table_HiRes.csv"))
+}
+
+# Now you have a list of dataframes, each containing the top two rows for each cluster in a sample
+
+
+
+```
+
+
+
+
+```{r}
+# Define a named vector or list that maps sample names to resolution column names
+resolutions <- c(SCT01 = "RNA_snn_res.0.2", 
+                 SCT02 = "RNA_snn_res.0.3", 
+                 SCT03 = "RNA_snn_res.0.2", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.4",
+                 SCT09 = "RNA_snn_res.0.3",
+                 SCT10 = "RNA_snn_res.0.2") #replace with your resolutions
+
+
+# Prepare lists to store plots and legends
+plot_list <- list()
+legend_list <- list()
+
+# Loop over each sample and apply the function with the appropriate resolution
+for (sample_name in names(samples)) {
+  print(sample_name)
+  resolution_column <- resolutions[sample_name]
+  plot <- analyze_sample(samples[[sample_name]], color_use, sample_name, resolution_column)
+  
+  # Extract the legend
+  legend <- ggplotGrob(plot + theme(legend.position = "bottom"))$grobs[[which(sapply(ggplotGrob(plot + theme(legend.position = "bottom"))$grobs, function(x) x$name) == "guide-box")]]
+  
+  plot_list[[sample_name]] <- plot
+  legend_list[[sample_name]] <- legend
+}
+
+# Save plots and legends to separate PDF files
+pdf("figures/20240518-1_AzimuthNaming/BarPlots_noLegend_LowRes.pdf", width = 11, height = 20)
+grid.arrange(grobs = plot_list, ncol = 1)
+dev.off()
+
+pdf("figures/20240518-1_AzimuthNaming/BarPlots_onlyLegends_LowRes.pdf", width = 20, height = 30)
+grid.arrange(grobs = legend_list, ncol = 1)
+dev.off()
+
+
+
+```
+
+# Table with these information
+
+```{r}
+resolutions <- c(SCT01 = "RNA_snn_res.0.2", 
+                 SCT02 = "RNA_snn_res.0.3", 
+                 SCT03 = "RNA_snn_res.0.2", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.4",
+                 SCT09 = "RNA_snn_res.0.3",
+                 SCT10 = "RNA_snn_res.0.2")
+
+azimuth_tables <- list()
+
+# Making the tables for further analyses
+generate_table <- function(seurat_obj, cluster_col, predicted_col, score_col) {
+  
+  # Use the .data pronoun to enable string input for dplyr functions
+  df <- seurat_obj@meta.data %>%
+    dplyr::select(.data[[cluster_col]], .data[[predicted_col]], .data[[score_col]]) %>%
+    dplyr::group_by(.data[[cluster_col]], .data[[predicted_col]]) %>%
+    dplyr::summarize(
+      Count = n(),
+      AverageScore = mean(.data[[score_col]], na.rm = TRUE),
+      .groups = 'drop'
+    ) %>%
+    dplyr::group_by(.data[[cluster_col]]) %>%
+    dplyr::mutate(Percentage = Count / sum(Count) * 100) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(.data[[cluster_col]], desc(Percentage))
+  
+  return(df)
+}
+
+# Now, when calling the function within the loop, include the score column as well
+for (sample_name in names(samples)) {
+  # Retrieve the correct resolution column for the current sample
+  cluster_col <- resolutions[sample_name]
+  
+  # Generate the table with the average scores
+  azimuth_tables[[sample_name]] <- generate_table(samples[[sample_name]], cluster_col, "predicted.annotation.l1", "predicted.annotation.l1.score")
+  
+  # Optionally, you can also save each table to an RDS file
+  #saveRDS(azimuth_tables[[sample_name]], file = paste0("results/20240518-1_AzimuthNaming/",sample_name, "_azimuth_table.rds"))
+  write_csv(azimuth_tables[[sample_name]], file = paste0("results/20240518-1_AzimuthNaming/",sample_name, "_azimuth_table_LowRes.csv"))
+}
+```
+
+
+```{r}
+# Making only the top2 table
+top_two_rows_tables <- list()
+
+# Loop over each sample and create the top two rows table
+for (sample_name in names(azimuth_tables)) {
+  # Extract the dataframe for the current sample
+  df <- azimuth_tables[[sample_name]]
+  
+  # Identify the cluster column name
+  cluster_col_name <- resolutions[sample_name]
+
+  # Assuming you want the top two rows based on the highest percentage
+  top_rows_df <- df %>%
+    dplyr::group_by(!!sym(cluster_col_name)) %>%
+    dplyr::slice_max(order_by = Percentage, n = 2) %>%
+    dplyr::ungroup()
+  
+  # Store the result in the list
+  top_two_rows_tables[[sample_name]] <- top_rows_df
+  
+  # Optionally, you can also save each table to an RDS file
+   write_csv(top_two_rows_tables[[sample_name]], file = paste0("results/20240518-1_AzimuthNaming/",sample_name, "_azimuth_Top2-table_LowRes.csv"))
+}
+
+# Now you have a list of dataframes, each containing the top two rows for each cluster in a sample
+
+
+
+```
+
+
+
+```{r}
+sessionInfo()
+```
+

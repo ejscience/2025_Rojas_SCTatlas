@@ -1,0 +1,235 @@
+# First start by moving the barcodes which will also re-name them. 
+./move_barcodes_for_cellsnp_lite.sh
+
+# Then run the cellsnp-lite on all the samples
+./run_cellsnp-lite.sh 
+
+
+
+###### 
+# SCT01 - first try
+#######
+# Now we can get our Rscript that will pull the data from /SCT01_nuc.chrX.snp.call/ to make the zipped SCT01_nuc.chrX.snp.call.summary.tsv.gz file to then run ANNOVAR
+Rscript RCODE_process_cellsnp.r \
+    SCT01_nuc.chrX.snp.call/cellSNP.samples.tsv \
+    SCT01_nuc.chrX.snp.call/cellSNP.tag.AD.mtx \
+    SCT01_nuc.chrX.snp.call/cellSNP.tag.DP.mtx \
+    SCT01_nuc.chrX.snp.call/cellSNP.tag.OTH.mtx \
+    SCT01_nuc.chrX.snp.call/cellSNP.base.vcf \
+    SCT01_nuc.chrX.snp.call.summary.tsv.gz
+
+
+# Let's pre-process the data for ANNOVAR
+zcat SCT01_nuc.chrX.snp.call.summary.tsv.gz | \
+awk -F"\t" 'NR>1 {print $2"\t"$3"\t"$3"\t"$4"\t"$5"\t"$1}' | \
+LANG=C sort | LANG=C uniq > SCT01_nuc.chrX.snp.call.summary.annov.input
+
+# Now that we have ANNOVAR we can run it but you need to run it in `/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific`
+## We may want to come back to this to check ALL.sites.2015_08 data. 
+# /home/ernesto/annovar/table_annovar.pl \
+#     SCT01_nuc.chrX.snp.call.summary.annov.input \
+#     /home/ernesto/annovar/humandb/ -buildver hg38 \
+#     -out SCT01_nuc.chrX.snp.call \
+#     -remove -protocol refGene,ensGene,avsnp150,ALL.sites.2015_08 \
+#     -operation g,g,f,f -nastring NA -polish
+
+# I think I actually ran this.
+/home/ernesto/annovar/table_annovar.pl \
+    SCT01_nuc.chrX.snp.call.summary.annov.input \
+    /home/ernesto/annovar/humandb/ -buildver hg38 \
+    -out SCT01_nuc.chrX.snp.call \
+    -remove -protocol refGene,ensGene \
+    -operation g,g -nastring NA -polish
+
+
+# Lastly we can run the QC step on the RNA, this will save it as a file: `SCT01_nuc.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz`
+Rscript RCODE_QC.r SCT01_nuc.chrX.snp.call.summary.tsv.gz SCT01_nuc.chrX.snp.call.hg38_multianno.txt 
+
+
+
+
+########
+# SCT02
+#######
+# Now we can get our Rscript that will pull the data from /SCT02.chrX.snp.call/ to make the zipped SCT02.chrX.snp.call.summary.tsv.gz file to then run ANNOVAR
+Rscript RCODE_process_cellsnp.r \
+    SCT02.chrX.snp.call/cellSNP.samples.tsv \
+    SCT02.chrX.snp.call/cellSNP.tag.AD.mtx \
+    SCT02.chrX.snp.call/cellSNP.tag.DP.mtx \
+    SCT02.chrX.snp.call/cellSNP.tag.OTH.mtx \
+    SCT02.chrX.snp.call/cellSNP.base.vcf \
+    SCT02.chrX.snp.call.summary.tsv.gz
+
+
+# Let's pre-process the data for ANNOVAR
+zcat SCT02.chrX.snp.call.summary.tsv.gz | \
+awk -F"\t" 'NR>1 {print $2"\t"$3"\t"$3"\t"$4"\t"$5"\t"$1}' | \
+LANG=C sort | LANG=C uniq > SCT02.chrX.snp.call.summary.annov.input
+
+# Now that we have ANNOVAR we can run it but you need to run it in `/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific`
+## We may want to come back to this to check ALL.sites.2015_08 data. 
+# /home/ernesto/annovar/table_annovar.pl \
+#     SCT02.chrX.snp.call.summary.annov.input \
+#     /home/ernesto/annovar/humandb/ -buildver hg38 \
+#     -out SCT02.chrX.snp.call \
+#     -remove -protocol refGene,ensGene,avsnp150 \
+#     -operation g,g,f -nastring NA -polish
+/home/ernesto/annovar/table_annovar.pl \
+    SCT02.chrX.snp.call.summary.annov.input \
+    /home/ernesto/annovar/humandb/ -buildver hg38 \
+    -out SCT02.chrX.snp.call \
+    -remove -protocol refGene,ensGene \
+    -operation g,g -nastring NA -polish
+
+# Lastly we can run the QC step on the RNA, this will save it as a file: `SCT02.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz`
+Rscript RCODE_QC.r SCT02.chrX.snp.call.summary.tsv.gz SCT02.chrX.snp.call.hg38_multianno.txt 
+
+
+########
+# SCT03
+#######
+# Now we can get our Rscript that will pull the data from /SCT03.chrX.snp.call/ to make the zipped SCT03.chrX.snp.call.summary.tsv.gz file to then run ANNOVAR
+Rscript RCODE_process_cellsnp.r \
+    SCT03.chrX.snp.call/cellSNP.samples.tsv \
+    SCT03.chrX.snp.call/cellSNP.tag.AD.mtx \
+    SCT03.chrX.snp.call/cellSNP.tag.DP.mtx \
+    SCT03.chrX.snp.call/cellSNP.tag.OTH.mtx \
+    SCT03.chrX.snp.call/cellSNP.base.vcf \
+    SCT03.chrX.snp.call.summary.tsv.gz
+
+
+# Let's pre-process the data for ANNOVAR
+zcat SCT03.chrX.snp.call.summary.tsv.gz | \
+awk -F"\t" 'NR>1 {print $2"\t"$3"\t"$3"\t"$4"\t"$5"\t"$1}' | \
+LANG=C sort | LANG=C uniq > SCT03.chrX.snp.call.summary.annov.input
+
+# Now that we have ANNOVAR we can run it but you need to run it in `/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific`
+## We may want to come back to this to check ALL.sites.2015_08 data. 
+# /home/ernesto/annovar/table_annovar.pl \
+#     SCT03.chrX.snp.call.summary.annov.input \
+#     /home/ernesto/annovar/humandb/ -buildver hg38 \
+#     -out SCT03.chrX.snp.call \
+#     -remove -protocol refGene,ensGene,avsnp150 \
+#     -operation g,g,f -nastring NA -polish
+/home/ernesto/annovar/table_annovar.pl \
+    SCT03.chrX.snp.call.summary.annov.input \
+    /home/ernesto/annovar/humandb/ -buildver hg38 \
+    -out SCT03.chrX.snp.call \
+    -remove -protocol refGene,ensGene \
+    -operation g,g -nastring NA -polish
+
+# Lastly we can run the QC step on the RNA, this will save it as a file: `SCT03.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz`
+Rscript RCODE_QC.r SCT03.chrX.snp.call.summary.tsv.gz SCT03.chrX.snp.call.hg38_multianno.txt 
+
+
+########
+# SCT06
+#######
+# Now we can get our Rscript that will pull the data from /SCT06.chrX.snp.call/ to make the zipped SCT06.chrX.snp.call.summary.tsv.gz file to then run ANNOVAR
+Rscript RCODE_process_cellsnp.r \
+    SCT06.chrX.snp.call/cellSNP.samples.tsv \
+    SCT06.chrX.snp.call/cellSNP.tag.AD.mtx \
+    SCT06.chrX.snp.call/cellSNP.tag.DP.mtx \
+    SCT06.chrX.snp.call/cellSNP.tag.OTH.mtx \
+    SCT06.chrX.snp.call/cellSNP.base.vcf \
+    SCT06.chrX.snp.call.summary.tsv.gz
+
+
+# Let's pre-process the data for ANNOVAR
+zcat SCT06.chrX.snp.call.summary.tsv.gz | \
+awk -F"\t" 'NR>1 {print $2"\t"$3"\t"$3"\t"$4"\t"$5"\t"$1}' | \
+LANG=C sort | LANG=C uniq > SCT06.chrX.snp.call.summary.annov.input
+
+# Now that we have ANNOVAR we can run it but you need to run it in `/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific`
+## We may want to come back to this to check ALL.sites.2015_08 data. 
+# /home/ernesto/annovar/table_annovar.pl \
+#     SCT06.chrX.snp.call.summary.annov.input \
+#     /home/ernesto/annovar/humandb/ -buildver hg38 \
+#     -out SCT06.chrX.snp.call \
+#     -remove -protocol refGene,ensGene,avsnp150 \
+#     -operation g,g,f -nastring NA -polish
+/home/ernesto/annovar/table_annovar.pl \
+    SCT06.chrX.snp.call.summary.annov.input \
+    /home/ernesto/annovar/humandb/ -buildver hg38 \
+    -out SCT06.chrX.snp.call \
+    -remove -protocol refGene,ensGene \
+    -operation g,g -nastring NA -polish
+
+# Lastly we can run the QC step on the RNA, this will save it as a file: `SCT06.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz`
+Rscript RCODE_QC.r SCT06.chrX.snp.call.summary.tsv.gz SCT06.chrX.snp.call.hg38_multianno.txt 
+
+
+########
+# SCT09
+#######
+# Now we can get our Rscript that will pull the data from /SCT09.chrX.snp.call/ to make the zipped SCT09.chrX.snp.call.summary.tsv.gz file to then run ANNOVAR
+Rscript RCODE_process_cellsnp.r \
+    SCT09.chrX.snp.call/cellSNP.samples.tsv \
+    SCT09.chrX.snp.call/cellSNP.tag.AD.mtx \
+    SCT09.chrX.snp.call/cellSNP.tag.DP.mtx \
+    SCT09.chrX.snp.call/cellSNP.tag.OTH.mtx \
+    SCT09.chrX.snp.call/cellSNP.base.vcf \
+    SCT09.chrX.snp.call.summary.tsv.gz
+
+
+# Let's pre-process the data for ANNOVAR
+zcat SCT09.chrX.snp.call.summary.tsv.gz | \
+awk -F"\t" 'NR>1 {print $2"\t"$3"\t"$3"\t"$4"\t"$5"\t"$1}' | \
+LANG=C sort | LANG=C uniq > SCT09.chrX.snp.call.summary.annov.input
+
+# Now that we have ANNOVAR we can run it but you need to run it in `/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific`
+## We may want to come back to this to check ALL.sites.2015_08 data. 
+# /home/ernesto/annovar/table_annovar.pl \
+#     SCT09.chrX.snp.call.summary.annov.input \
+#     /home/ernesto/annovar/humandb/ -buildver hg38 \
+#     -out SCT09.chrX.snp.call \
+#     -remove -protocol refGene,ensGene,avsnp150 \
+#     -operation g,g,f -nastring NA -polish
+/home/ernesto/annovar/table_annovar.pl \
+    SCT09.chrX.snp.call.summary.annov.input \
+    /home/ernesto/annovar/humandb/ -buildver hg38 \
+    -out SCT09.chrX.snp.call \
+    -remove -protocol refGene,ensGene \
+    -operation g,g -nastring NA -polish
+
+# Lastly we can run the QC step on the RNA, this will save it as a file: `SCT09.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz`
+Rscript RCODE_QC.r SCT09.chrX.snp.call.summary.tsv.gz SCT09.chrX.snp.call.hg38_multianno.txt 
+
+
+
+########
+# SCT10
+#######
+# Now we can get our Rscript that will pull the data from /SCT10.chrX.snp.call/ to make the zipped SCT10.chrX.snp.call.summary.tsv.gz file to then run ANNOVAR
+Rscript RCODE_process_cellsnp.r \
+    SCT10.chrX.snp.call/cellSNP.samples.tsv \
+    SCT10.chrX.snp.call/cellSNP.tag.AD.mtx \
+    SCT10.chrX.snp.call/cellSNP.tag.DP.mtx \
+    SCT10.chrX.snp.call/cellSNP.tag.OTH.mtx \
+    SCT10.chrX.snp.call/cellSNP.base.vcf \
+    SCT10.chrX.snp.call.summary.tsv.gz
+
+
+# Let's pre-process the data for ANNOVAR
+zcat SCT10.chrX.snp.call.summary.tsv.gz | \
+awk -F"\t" 'NR>1 {print $2"\t"$3"\t"$3"\t"$4"\t"$5"\t"$1}' | \
+LANG=C sort | LANG=C uniq > SCT10.chrX.snp.call.summary.annov.input
+
+# Now that we have ANNOVAR we can run it but you need to run it in `/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific`
+## We may want to come back to this to check ALL.sites.2015_08 data. 
+# /home/ernesto/annovar/table_annovar.pl \
+#     SCT10.chrX.snp.call.summary.annov.input \
+#     /home/ernesto/annovar/humandb/ -buildver hg38 \
+#     -out SCT10.chrX.snp.call \
+#     -remove -protocol refGene,ensGene,avsnp150 \
+#     -operation g,g,f -nastring NA -polish
+/home/ernesto/annovar/table_annovar.pl \
+    SCT10.chrX.snp.call.summary.annov.input \
+    /home/ernesto/annovar/humandb/ -buildver hg38 \
+    -out SCT10.chrX.snp.call \
+    -remove -protocol refGene,ensGene \
+    -operation g,g -nastring NA -polish
+
+# Lastly we can run the QC step on the RNA, this will save it as a file: `SCT10.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz`
+Rscript RCODE_QC.r SCT10.chrX.snp.call.summary.tsv.gz SCT10.chrX.snp.call.hg38_multianno.txt 
+

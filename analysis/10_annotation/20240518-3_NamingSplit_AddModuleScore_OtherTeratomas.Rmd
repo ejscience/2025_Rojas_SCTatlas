@@ -1,0 +1,156 @@
+---
+title: "Adding Cell Type Score"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+
+library(Seurat)
+library(scCustomize)
+library(colorRamp2)
+
+source("../../functions/Ryans_Functions.R")
+```
+
+
+
+```{r}
+OvTe_raw <- readRDS(file = '/mnt/DATA/LairdLab/ernesto/data/scrna/cao2023/GSE229343_seurat_for_geo.Rds')
+cd.ter <- readRDS("/mnt/DATA/LairdLab/rojas/Teratomas_McDonald2020-Yu2023_iPSC-Ovarian/data/dm-ter-human-merged_clustering_v3.seurat.Robj")
+#read in the meta data that was published
+publ.maps <- read.delim("/mnt/DATA/LairdLab/rojas/Teratomas_McDonald2020-Yu2023_iPSC-Ovarian/data/dm-ter-human-merged_metadata.tsv", row.names = 1)
+
+#now add the metadata from the published mapping to the cell derived teratoma 
+cd.ter <- AddMetaData(cd.ter, metadata = publ.maps)
+
+#link between the cluster names and the germ layer
+layer.maps <- c("MSC/Fib"="Mesoderm", 
+                   "MyoFib"="Mesoderm", 
+                   "Cycling MSC/Fib"="Mesoderm", 
+                   "Retinal Epi"="Ectoderm", 
+                   "Adipogenic MSC/Fib"="Mesoderm", 
+                   "Early Neurons"="Ectoderm", 
+                   "Radial Glia"="Ectoderm", 
+                   "Mid/Hindgut Epi"="Endoderm", 
+                   "Muscle Prog"="Mesoderm", 
+                   "Pericytes"="Mesoderm",
+                   "CycProg"="Ectoderm",
+                   "Chondrogenic MSC/Fib"="Mesoderm", 
+                   "Foregut Epi"="Endoderm",
+                   "Smooth Muscle"="Mesoderm", 
+                   "Cardiac/Skeletal Muscle"="Mesoderm", 
+                   "Immune"="Mesoderm", 
+                   "Retinal Neurons"="Ectoderm", 
+                   "Schwann Cells"="Ectoderm", 
+                   "Melanoblasts"="Ectoderm", 
+                   "Kidney Prog"="Mesoderm", 
+                   "HSC"="Mesoderm", 
+                   "Airway Epi"="Endoderm",
+                   "Erythrocyte"="Mesoderm")
+#add the germ layer metadata
+cd.ter@meta.data$germ_layer <- layer.maps[cd.ter$cluster]
+
+
+rm(metadata, publ.maps, layer.maps)
+```
+
+```{r}
+samples_list <- readRDS(file = "data/20240517_SCTsamplesSplit_DGE_Clustering/SamplesList_SCTlistThatCreatedObjects.rds")
+```
+
+
+```{r}
+# Set the idents for HIRES
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.4"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.2"
+
+resolutions <- c(SCT01 = "RNA_snn_res.0.2", 
+                 SCT02 = "RNA_snn_res.0.3", 
+                 SCT03 = "RNA_snn_res.0.2", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.4",
+                 SCT09 = "RNA_snn_res.0.3",
+                 SCT10 = "RNA_snn_res.0.2")
+```
+
+
+```{r}
+# Open a PDF device to save the plots
+pdf("figures/20240518-3_NamingSplit_AddModuleScore_OtherTeratomas/HiRes_cluster_signature_scoring_results.pdf", width = 9)
+
+# Loop through each sample in the sobj list and run cluster.signature.scoring
+# Loop through each sample and run cluster.signature.scoring with the appropriate query.grouping
+for (sample_name in names(samples_list)) {
+  
+  # Get the current sample
+  sample <- samples_list[[sample_name]]
+  
+  # Get the appropriate query.grouping from the resolutions vector
+  query_grouping <- resolutions[sample_name]
+  
+  # Run cluster.signature.scoring for OvTe_raw
+  cluster.signature.scoring(sample, OvTe_raw, query.grouping = query_grouping, reference.grouping = "annotation", cluster.cols = TRUE, cluster.rows = TRUE)
+
+  # Run cluster.signature.scoring for cd.ter
+  cluster.signature.scoring(sample, cd.ter, query.grouping = query_grouping, reference.grouping = "cluster", cluster.cols = TRUE, cluster.rows = TRUE)
+} 
+
+# Close the PDF device
+dev.off()
+
+```
+
+
+
+
+```{r}
+# Set the idents for LOW RES
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.1"
+
+
+resolutions <- c(SCT01 = "RNA_snn_res.0.1", 
+                 SCT02 = "RNA_snn_res.0.1", 
+                 SCT03 = "RNA_snn_res.0.1", 
+                 SCT01n = "RNA_snn_res.0.1", 
+                 SCT06 = "RNA_snn_res.0.1",
+                 SCT09 = "RNA_snn_res.0.1",
+                 SCT10 = "RNA_snn_res.0.1")
+```
+
+
+```{r}
+# Open a PDF device to save the plots
+pdf("figures/20240518-3_NamingSplit_AddModuleScore_OtherTeratomas/LoRes_cluster_signature_scoring_results.pdf", width = 9)
+
+# Loop through each sample in the sobj list and run cluster.signature.scoring
+for (sample_name in names(samples_list)) {
+  
+  # Get the current sample
+  sample <- samples_list[[sample_name]]
+  # Get the appropriate query.grouping from the resolutions vector
+  query_grouping <- resolutions[sample_name]
+  # Run cluster.signature.scoring for OvTe_raw
+  cluster.signature.scoring(sample, query.grouping = query_grouping, OvTe_raw, reference.grouping = "annotation", cluster.cols = TRUE, cluster.rows = TRUE)
+
+  # Run cluster.signature.scoring for cd.ter
+  cluster.signature.scoring(sample, query.grouping = query_grouping, cd.ter, reference.grouping = "cluster", cluster.cols = TRUE, cluster.rows = TRUE)
+}
+
+# Close the PDF device
+dev.off()
+
+```

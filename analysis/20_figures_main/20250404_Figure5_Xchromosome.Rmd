@@ -1,0 +1,1125 @@
+---
+title: "20250404_Figure5_Xchromosome"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(scCustomize)
+library(ggprism)
+library(colorRamp2)
+library(tidyverse)
+library(ComplexHeatmap)
+library(ggpattern)
+library(viridis)
+library(scales)
+library(dplyr)
+library(pheatmap)
+library(ggpubr)
+
+get_legend <- function(my_plot) {
+  tmp <- ggplot_gtable(ggplot_build(my_plot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+
+# Immune (Blue) shades
+Immune_shades <- c("#85C1E9", "#5DADE2", "#3498DB", "#2980B9", "#1F618D")
+
+# Neuroectoderm (Red) shades
+Neuroectoderm_shades <- c("#E57373", "#D64A4A", "#B53A3A", "#A83232")
+
+# Epithelia (Green) shades
+Epithelia_shades <- c("#A8E6A3", "#7CC47F", "#61B14B", "#88C992", "#4E9835", "#009A44", "#3CB371")
+
+# Stroma (Purple) shades
+Stroma_shades <- c("#D1A1DA", "#C882D5", "#A259C0", "#8E38A7", "#754C96", "#A67BB4", "#B46BB2")
+
+# Endothelia (Orange) shades
+Endothelia_shades <- c("#F9A14B", "#F47D2D", "#D36E20", "#FFB14C")
+
+# Combine all shades into one palette
+pal1 <- c(
+  Epithelia_shades,
+  Stroma_shades,
+  Endothelia_shades,
+  Immune_shades,
+  Neuroectoderm_shades
+)
+
+# Assign names to the colors
+names(pal1) <- c(
+  "BPIFB1+_epi",
+  "OCT4+_epi",
+  "LGR5+_epi",
+  "Epithelia_spare",
+  "cycl_epi",
+  "cilia_epi",  
+  "enterochromaffin", # Extra in case you need it
+
+  "fibroblast",
+  "COL12A1+_myofibro",
+  "sm_musc",
+  "chondrocyte",
+  "cycl_mesench",
+  "PAX7+_musc_MSC",
+  "sk_musc",
+
+  "vasc_endo",
+  "vein_endo",
+  "lymph_endo",
+  "cycl_endo",
+
+  "mac",
+  "infl_mac",
+  "t_cell",
+  "mast",
+  "nkt",
+
+  "GFAP+_astro_radGlia",
+  "neuro",
+  "oligo",
+  "CUX2+_cilia_astro_radGlia"
+)
+
+# Check the final palette
+pal1
+
+
+pal_broad <- c("Stroma" =  "#9467bd", "Epithelia" = "#2ca02c", "Endothelia" = "#ff7f0e", "Neuroectoderm" = "#d62728", "Immune" = "#1f77b4")
+pal_solidcystic <- c("solid" = "#696969", "cystic" = "#D3D3D3")
+pal_epithrichpoor <- c("EpitheliaRich" = "orange", "EpitheliaPoor" = "blue", "epithelia_rich" = "orange", "epithelia_poor"= "blue")
+pal_samples <- c(
+  "SCT02" = "#66C2A5",
+  "SCT06" = "#FC8D62",
+  "SCT09" = "#8DA0CB",
+  "SCT01" = "#E78AC3",
+  "SCT03" = "#A6D854",
+  "SCT10" = "#FFD92F"
+)
+set.seed(12345)
+
+```
+
+# Import the data
+
+```{r}
+nucSamples = readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+metadata <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+nucSamples@meta.data = metadata
+rm(metadata)
+nucSamples$EpitheliaRichPoor = factor(nucSamples$EpitheliaRichPoor, levels = c("EpitheliaPoor", "EpitheliaRich"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+Idents(nucSamples) <- "orig.ident"
+nucSamples <- RenameIdents(nucSamples, "SCT01" = "epitheliaPoor",
+                      "SCT03" = "epitheliaPoor", 
+                      "SCT09" = "epitheliaPoor",
+                       "SCT10" = "epitheliaRich_OCT4hi", 
+                       "SCT02" = "epitheliaRich_OCT4lo",
+                     "SCT06" = "epitheliaRich_OCT4lo")
+nucSamples$EpitheliaSplit <- Idents(nucSamples)
+nucSamples$EpitheliaSplit = factor(nucSamples$EpitheliaSplit, levels = c("epitheliaRich_OCT4hi", "epitheliaPoor", "epitheliaRich_OCT4lo"))
+
+
+# Create a new metadata column "Sex" and assign "Female" by default
+nucSamples$Sex <- "Female"
+# Assign "Male" to cells from SCT06
+nucSamples$Sex[nucSamples$orig.ident == "SCT06"] <- "Male"
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples
+DimPlot_scCustom(nucSamples, reduction = "umap.harmony", group.by = "HiResNamedOrdered", colors_use = pal1)
+
+
+```
+
+Grab the X chromosome data, and keep the females as nucSamples_females
+
+```{r}
+metadata <- readRDS(file = "data/metadataForXchr_fromGOGH_20241222.rds")
+# Use grep to find the column names matching the pattern
+x <- grep(pattern = "XIST|XACT|chrX|chrY|Autosome|infercnv_sub", 
+          x = colnames(metadata), 
+          value = TRUE)
+# Use dplyr to select only those columns from metadata
+metadata <- metadata %>%
+  dplyr::select(all_of(x))
+
+nucSamples <- AddMetaData(nucSamples, metadata = metadata)
+rm(metadata, x)
+# Add a new metadata column based on the conditions
+nucSamples@meta.data <- nucSamples@meta.data %>%
+  mutate(Xa_called = case_when(
+    X_to_Autosome_Ratio > 0.036 & proportion_dupli_chrX > 0.5 ~ "XaXa",
+    X_to_Autosome_Ratio < 0.036 & proportion_dupli_chrX < 0.5 ~ "XaXi",
+    TRUE ~ "Unknown"
+  ))
+
+nucSamples_female = subset(nucSamples, subset = Sex == "Female")
+```
+
+
+# Make the plots of Escapees vs not
+
+```{r}
+ensembl = readRDS(file = "data/ENSEMBL_Mart_Human_20250212.RDS")
+# Retrieve gene coordinates
+gene_coord <- unique(as.data.frame(getBM(attributes = c("hgnc_symbol", "chromosome_name", "start_position", "end_position","strand"), mart = ensembl)))
+
+# Remove entries with empty gene names
+gene_coord <- gene_coord[gene_coord$hgnc_symbol != "",]
+
+
+```
+
+
+Get the X-linked and Y-linked genes. 
+
+```{r}
+
+# Get X chromosome genes
+x_genes <- gene_coord$hgnc_symbol[gene_coord$chromosome_name == "X"]
+x_genes <- x_genes[x_genes %in% rownames(nucSamples)]  # Only keep genes present in the expression data
+
+# Get Y chromosome genes
+y_genes <- gene_coord$hgnc_symbol[gene_coord$chromosome_name == "Y"]
+y_genes <- y_genes[y_genes %in% rownames(nucSamples)]  # Only keep genes present in the expression data
+
+# Get autosomal genes (chromosomes 1-22)
+autosomal_genes <- gene_coord$hgnc_symbol[gene_coord$chromosome_name %in% as.character(1:22)]
+autosomal_genes <- autosomal_genes[autosomal_genes %in% rownames(nucSamples)]  # Only keep genes present in the expression data
+```
+
+
+```{r}
+XCIstatus = read_excel("../functions/XLinkedGenes_StatusForXCI_fromTukiainen_2017.xlsx")
+# Filter XCIstatus for genes in x_genes and status "Escape"
+x_genes_escape <- XCIstatus %>%
+  filter(`Gene name` %in% x_genes, `Reported XCI status` == "Escape") %>%
+  pull(`Gene name`)
+
+# Filter XCIstatus for genes in x_genes and status "Inactive"
+x_genes_inactive <- XCIstatus %>%
+  filter(`Gene name` %in% x_genes, `Reported XCI status` == "Inactive") %>%
+  pull(`Gene name`)
+
+```
+
+
+
+Grab the gene expr matrix
+```{r}
+# Extract the expression matrix
+mtx <- GetAssayData(nucSamples, layer = "data")
+
+# Extract cell cluster or cell type info
+cell_clusters <- data.frame(index = rownames(nucSamples@meta.data), 
+                            louvain = nucSamples@meta.data$HiResNamedOrdered)
+
+```
+
+
+Run X/A ratio - for the escapee AND the non-escapee
+```{r}
+# Sum expression for X-chromosome genes
+x_sum <- colSums(mtx[x_genes, ])
+
+# Sum expression for autosomal genes
+autosomal_sum <- colSums(mtx[autosomal_genes, ])
+
+# Calculate the ratio of X-chromosome to autosomal gene expression for each cell
+x_to_autosome_ratio <- x_sum / autosomal_sum
+
+# Merge the ratio with cell cluster data
+cell_clusters$X_to_Autosome_Ratio <- x_to_autosome_ratio
+
+# Sum expression for X-chromosome genes
+x_sum_escape <- colSums(mtx[x_genes_escape, ])
+
+# Calculate the ratio of X-chromosome to autosomal gene expression for each cell
+x_to_autosome_ratio_escape <- x_sum_escape / autosomal_sum
+
+# Sum expression for X-chromosome genes
+x_sum_inactive <- colSums(mtx[x_genes_inactive, ])
+
+# Calculate the ratio of X-chromosome to autosomal gene expression for each cell
+x_to_autosome_ratio_inactive <- x_sum_inactive / autosomal_sum
+
+```
+
+```{r}
+nucSamples$X_to_Autosome_Ratio <- x_to_autosome_ratio
+nucSamples$X_to_Autosome_Ratio_inactive <- x_to_autosome_ratio_inactive
+nucSamples$X_to_Autosome_Ratio_escape <- x_to_autosome_ratio_escape
+
+```
+
+
+```{r}
+
+
+p1 = VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio", group.by = "XIST_groups", pt.size = 0) + stat_compare_means(comparisons = list(
+    c("Female_XIST_Not_Expressed", "Male"),
+    c("Female_XIST_Expressed", "Male"), 
+    c("Female_XIST_Not_Expressed","Female_XIST_Expressed")), label = "p.value") +
+     ylim(0,max(nucSamples$X_to_Autosome_Ratio)*1.3)+ geom_hline(yintercept = 0.036)
+
+p2 = VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio_inactive", group.by = "XIST_groups", pt.size = 0) + stat_compare_means(comparisons = list(
+    c("Female_XIST_Not_Expressed", "Male"),
+    c("Female_XIST_Expressed", "Male"), 
+    c("Female_XIST_Not_Expressed","Female_XIST_Expressed")), label = "p.value") +
+     ylim(0,max(nucSamples$X_to_Autosome_Ratio_inactive)*1.3)  + geom_hline(yintercept = 0.022)
+
+p3 = VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio_escape", group.by = "XIST_groups", pt.size = 0) + stat_compare_means(comparisons = list(
+    c("Female_XIST_Not_Expressed", "Male"),
+    c("Female_XIST_Expressed", "Male"), 
+    c("Female_XIST_Not_Expressed","Female_XIST_Expressed")), label = "p.value") +
+     ylim(0,.022) + geom_hline(yintercept = 0.010)
+
+
+combined_plots = (p1 & NoLegend()| p2 & NoLegend() | p3 & NoLegend())
+print(combined_plots)
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/XAratio_XISTbuckets.pdf", width = 11, height = 6)
+print(combined_plots)
+dev.off()
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/XAratio_XISTbuckets_LEGEND.pdf")
+legend <- get_legend(p3)
+cowplot::plot_grid(legend, ncol = 1)
+dev.off()
+
+nucSamples@meta.data %>%
+    group_by(XIST_groups) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio, na.rm = TRUE))
+nucSamples@meta.data %>%
+    group_by(XIST_groups) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio_inactive, na.rm = TRUE))
+nucSamples@meta.data %>%
+    group_by(XIST_groups) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio_escape, na.rm = TRUE))
+```
+
+
+```{r just making the points > 0, eval=FALSE, include=FALSE}
+p1 = VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio", group.by = "orig.ident", pt.size = 0.0001, colors_use = pal_samples) + 
+  # stat_compare_means(comparisons = list(
+  #   c("Female_XIST_Not_Expressed", "Male"),
+  #   c("Female_XIST_Expressed", "Male"),
+  #   c("Female_XIST_Not_Expressed","Female_XIST_Expressed")), label = "p.value") +
+  # ylim(0,max(nucSamples$X_to_Autosome_Ratio)*1.3) +
+  geom_hline(yintercept = 0.036)
+
+p2 = VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio_inactive", group.by = "orig.ident", pt.size = 0.00001, colors_use = pal_samples) + 
+  # stat_compare_means(comparisons = list(
+  #   c("Female_XIST_Not_Expressed", "Male"),
+  #   c("Female_XIST_Expressed", "Male"), 
+  #   c("Female_XIST_Not_Expressed","Female_XIST_Expressed")), label = "p.value") +
+  #    ylim(0,max(nucSamples$X_to_Autosome_Ratio_inactive)*1.3)  + 
+  geom_hline(yintercept = 0.022)
+
+
+p3 = VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio_escape", group.by = "orig.ident", pt.size = 0.00001, colors_use = pal_samples) + 
+  # stat_compare_means(comparisons = list(
+  #   c("Female_XIST_Not_Expressed", "Male"),
+  #   c("Female_XIST_Expressed", "Male"), 
+  #   c("Female_XIST_Not_Expressed","Female_XIST_Expressed")), label = "p.value") +
+  #    ylim(0,.017) + 
+  geom_hline(yintercept = 0.010)
+
+
+combined_plots = (p1 & NoLegend()| p2 & NoLegend() | p3 & NoLegend())
+print(combined_plots)
+
+
+
+
+nucSamples@meta.data %>%
+    group_by(orig.ident) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio, na.rm = TRUE))
+nucSamples@meta.data %>%
+    group_by(orig.ident) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio_inactive, na.rm = TRUE))
+nucSamples@meta.data %>%
+    group_by(orig.ident) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio_escape, na.rm = TRUE))
+```
+
+
+```{r}
+# Reorder the orig.ident factor so that SCT06 is moved to the end.
+# Adjust the levels to match your desired order.
+nucSamples$orig.ident <- factor(nucSamples$orig.ident, 
+                                levels = c("SCT02", "SCT09", "SCT01", "SCT03", "SCT10", "SCT06"))
+
+# Define the comparisons: compare each sample (except SCT06) to SCT06.
+comparisons_list <- list(
+  c("SCT02", "SCT06"),
+  c("SCT09", "SCT06"),
+  c("SCT01", "SCT06"),
+  c("SCT03", "SCT06"),
+  c("SCT10", "SCT06")
+)
+
+# p1: Violin plot for X_to_Autosome_Ratio
+p1 <- VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio", group.by = "orig.ident", 
+                       pt.size = 0, colors_use = pal_samples) + 
+    stat_compare_means(comparisons = comparisons_list, label = "p.value") +
+    ylim(0,max(nucSamples$X_to_Autosome_Ratio)*1.8) +
+    geom_hline(yintercept = 0.036)
+
+# p2: Violin plot for X_to_Autosome_Ratio_inactive
+p2 <- VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio_inactive", group.by = "orig.ident", 
+                       pt.size = 0, colors_use = pal_samples) + 
+    ylim(0,max(nucSamples$X_to_Autosome_Ratio_inactive)*1.8)  + 
+    stat_compare_means(comparisons = comparisons_list, label = "p.value" ) +
+    geom_hline(yintercept = 0.022)
+
+# p3: Violin plot for X_to_Autosome_Ratio_escape
+p3 <- VlnPlot_scCustom(nucSamples, features = "X_to_Autosome_Ratio_escape", group.by = "orig.ident", 
+                       pt.size = 0, colors_use = pal_samples) + 
+    stat_compare_means(comparisons = comparisons_list, label = "p.value") +
+    ylim(0,.022) + 
+    geom_hline(yintercept = 0.010)
+
+# Combine the plots; remove legends if desired.
+combined_plots <- (p1 & NoLegend()) | (p2 & NoLegend()) | (p3 & NoLegend())
+combined_plots
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/XAratio_Samples.pdf", height = 5, width = 12)
+print(combined_plots)
+dev.off()
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/XAratio_Samples_LEGEND.pdf")
+legend <- get_legend(p3)
+cowplot::plot_grid(legend, ncol = 1)
+dev.off()
+
+nucSamples@meta.data %>%
+    group_by(orig.ident) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio, na.rm = TRUE))
+nucSamples@meta.data %>%
+    group_by(orig.ident) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio_inactive, na.rm = TRUE))
+nucSamples@meta.data %>%
+    group_by(orig.ident) %>%
+    summarise(mean_ratio = mean(X_to_Autosome_Ratio_escape, na.rm = TRUE))
+```
+
+Heatmap of X/A Ratio within 
+```{r}
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+
+#---------------------------
+# Extract relevant data from Seurat object
+#---------------------------
+heatmap_data <- nucSamples_female@meta.data %>%
+  dplyr::select(HiResNamedOrdered, orig.ident, X_to_Autosome_Ratio, BroadCategory) %>%
+  group_by(HiResNamedOrdered, orig.ident) %>%
+  summarise(X_to_Autosome_Ratio = mean(X_to_Autosome_Ratio, na.rm = TRUE)) %>%
+  pivot_wider(names_from = orig.ident, values_from = X_to_Autosome_Ratio, values_fill = NA) %>%
+  as.data.frame()
+
+# Convert HiResNamedOrdered to row names
+rownames(heatmap_data) <- heatmap_data$HiResNamedOrdered
+heatmap_data$HiResNamedOrdered <- NULL  # Remove the column
+
+#---------------------------
+# Fix BroadCategory mapping: Ensure it includes only matching cell types
+#---------------------------
+broad_category_mapping <- nucSamples_female@meta.data %>%
+  dplyr::select(HiResNamedOrdered, BroadCategory) %>%
+  distinct() %>%
+  filter(HiResNamedOrdered %in% rownames(heatmap_data)) %>%  # Keep only matching rows
+  as.data.frame()
+
+# Ensure row order in broad_category_mapping matches heatmap_data
+broad_category_mapping <- broad_category_mapping[match(rownames(heatmap_data), broad_category_mapping$HiResNamedOrdered), ]
+broad_category_mapping$HiResNamedOrdered <- NULL  # Remove redundant column
+
+# Create annotation for BroadCategory
+annotation_row <- data.frame(BroadCategory = broad_category_mapping$BroadCategory)
+rownames(annotation_row) <- rownames(heatmap_data)
+
+#---------------------------
+# Build a custom color scale so that grey is centered at 0.036
+#---------------------------
+mat <- as.matrix(heatmap_data)
+min_val <- min(mat, na.rm = TRUE)
+max_val <- max(mat, na.rm = TRUE)
+
+# Total number of intervals for the color gradient
+n_intervals <- 100
+
+# Compute the number of intervals from min_val to 0.036 and from 0.036 to max_val
+n_lower <- max(round((0.036 - min_val) / (max_val - min_val) * n_intervals), 1)
+n_upper <- n_intervals - n_lower
+
+# Create a breaks vector that ensures 0.036 is exactly one of the breakpoints
+breaks <- c(seq(min_val, 0.036, length.out = n_lower + 1),
+            seq(0.036, max_val, length.out = n_upper + 1)[-1])
+
+# Generate a custom palette that goes from purple to grey to yellow.
+# Note: The number of colors must match n_intervals.
+custom_palette <- colorRampPalette(c("purple", "grey", "yellow"))(n_intervals)
+
+#---------------------------
+# Generate heatmap with pheatmap
+#---------------------------
+p1 = pheatmap(
+  t(mat),
+  cluster_cols = FALSE,  # Keep order based on HiResNamedOrdered
+  cluster_rows = TRUE,   # Cluster samples
+  annotation_col = annotation_row,  # Add BroadCategory colors
+  annotation_colors = list(BroadCategory = pal_broad),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  # fontsize_row = 10,
+  # fontsize_col = 10,
+  color = custom_palette,
+  breaks = breaks,
+  na_col = "white"
+)
+print(p1)
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/XAratioHeatmap.pdf", height = 6, width = 11)
+print(p1)
+dev.off()
+
+```
+
+# make the ridge plots for XIST
+
+
+```{r}
+nucSamples$orig.ident <- factor(nucSamples$orig.ident, 
+                                levels = c("SCT09", "SCT01", "SCT03", "SCT10", "SCT06","SCT02"))
+VlnPlot_scCustom(nucSamples, features = "XIST", group.by = "orig.ident", colors_use = pal_broad, split.by = "BroadCategory", pt.size = 0)
+RidgePlot(nucSamples, features = "XIST", group.by = "orig.ident", cols = pal_samples, log = T)
+RidgePlot(nucSamples, features = "XIST", group.by = "orig.ident", cols = pal_samples, log = F)
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/XIST_VlnANDRidge.pdf", height = 8, width = 12.5)
+nucSamples$orig.ident <- factor(nucSamples$orig.ident, 
+                                levels = rev(c("SCT09", "SCT01", "SCT03", "SCT10", "SCT06","SCT02")))
+p1 = VlnPlot_scCustom(nucSamples, features = "XIST", group.by = "orig.ident", colors_use = pal_broad, split.by = "BroadCategory", pt.size = 0)
+nucSamples$orig.ident <- factor(nucSamples$orig.ident, 
+                                levels = c("SCT09", "SCT01", "SCT03", "SCT10", "SCT06","SCT02"))
+p2 = RidgePlot(nucSamples, features = "XIST", group.by = "orig.ident", cols = pal_samples, log = F) + scale_x_continuous(limits = c(-0.25, 3.5))
+nucSamples$orig.ident <- factor(nucSamples$orig.ident, 
+                                levels = c("SCT09", "SCT01", "SCT03", "SCT10", "SCT06","SCT02"))
+combined_plot <- p2 / p1
+print(combined_plot)
+dev.off()
+
+```
+
+```{r}
+DotPlot_scCustom(nucSamples, features = c( "has_dupli_chrY", "has_loss_chrY", "has_dupli_chrX", "has_loss_chrX"), x_lab_rotate = T, group.by = "orig.ident", split.by = "BroadCategory", cols = "RdBu")
+DotPlot_scCustom(nucSamples, features = c( "has_dupli_chrY", "has_loss_chrY", "has_dupli_chrX", "has_loss_chrX"), x_lab_rotate = T, split.by = "orig.ident", group.by = "BroadCategory", cols = "RdBu")
+
+
+Clustered_DotPlot(nucSamples, features = c( "has_dupli_chrY", "has_loss_chrY", "has_dupli_chrX", "has_loss_chrX"), x_lab_rotate = T, group.by = "orig.ident", flip = T, colors_use_idents = pal_samples, cluster_feature = F)
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/inferCNV_HasGainORLoss_XandYchr.pdf", height = 3, width = 10)
+Clustered_DotPlot(nucSamples, features = c( "has_dupli_chrY", "has_loss_chrY", "has_dupli_chrX", "has_loss_chrX"), x_lab_rotate = T, group.by = "orig.ident", flip = T, colors_use_idents = pal_samples, cluster_feature = F)
+dev.off()
+
+```
+
+```{r}
+p1 = FeatureScatter_scCustom(nucSamples_female, feature1 = "X_to_Autosome_Ratio", feature2 = "proportion_dupli_chrX", group.by = "HiResNamedOrdered", colors_use = pal1, plot.cor = T, pt.size = 1) & geom_vline(xintercept = 0.036) & geom_hline(yintercept = .5)
+print(p1)
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/ScatterPlot.pdf", height = 3, width = 10)
+print(p1)
+dev.off()
+
+
+
+
+
+library(ggplot2)
+library(ggpubr)
+
+# Construct your data frame (adjust this if necessary)
+df <- data.frame(
+    XAratio = nucSamples_female$X_to_Autosome_Ratio,
+    prop_Xchr = nucSamples_female$proportion_dupli_chrX,
+    BroadCategory = nucSamples_female$BroadCategory
+)
+
+library(ggplot2)
+library(ggpubr)
+
+# Assuming your data frame "df" has the following columns:
+# - XAratio: numeric, X-to-Autosome ratio values
+# - prop_Xchr: numeric, proportion of X chromosome duplication
+# - BroadCategory: factor or character, grouping variable
+
+# Create a scatter plot colored by BroadCategory and add overall density contours
+p <- ggplot(df, aes(x = XAratio, y = prop_Xchr)) +
+    # Scatter plot: points colored by BroadCategory
+    geom_point(aes(color = BroadCategory), size = 2) +
+    # Add overall 2D density contours computed for all data
+    geom_density_2d(color = "black", bins = 20, linewidth = .7, na.rm = TRUE) +
+    # Add dashed reference lines, if desired
+    geom_vline(xintercept = 0.036, color = "black", linewidth = 2) +
+    geom_hline(yintercept = 0.5,  color = "black", linewidth = 2) +
+    scale_color_manual(values = pal_broad) +
+    # Add overall Pearson correlation and p-value
+    stat_cor(method = "spearman") +
+    theme_classic() +
+    labs(x = "X-to-Autosome Ratio", 
+         y = "Proportion of X Chromosome Duplication",
+         title = "Scatter Plot with 2D Density Contours")
+
+p
+
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/ScatterPlot.pdf", height = 8, width = 12)
+print(p)
+dev.off()
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(scales) # for percent formatting
+
+# Create a summary data frame with counts and proportions.
+# Group by BroadCategory, SCT sample (from orig.ident), and Xa_called.
+summary_df <- nucSamples_female@meta.data %>%
+  group_by(BroadCategory, SCTsample = orig.ident, Xa_called) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(BroadCategory, SCTsample) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()
+summary_df$Xa_called = factor(summary_df$Xa_called, levels = c("XaXa", "unknown", "XaXi"))
+
+# Inspect the summary
+print(summary_df)
+
+# Now create the stacked bar plot.
+# - x axis: BroadCategory (cell type)
+# - Each bar shows the proportion of cells with each Xa_called category.
+# - The plot is faceted by SCT sample.
+p1 = ggplot(summary_df, aes(x = BroadCategory, y = proportion, 
+                       fill = Xa_called)) +
+    geom_bar(stat = "identity", position = "stack") +
+    facet_wrap(~ SCTsample) +
+    #scale_y_continuous(labels = percent_format()) +
+    scale_fill_manual(values = c("XaXa" = "#BC1E2D", 
+                                 "unknown" = "lightgrey", 
+                                 "XaXi" = "#F4901E")) +
+    labs(x = "Broad Category", 
+         y = "Proportion of Cells", 
+         fill = "Xa Called") +
+    theme_classic() +
+    coord_flip()
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/Xa_called_barplot_Females.pdf", height = 4, width = 8)
+print(p1)
+dev.off()
+
+```
+
+
+
+# Running correlation plots for X to autosome ratio...
+```{r}
+# Load required libraries
+library(Seurat)
+library(dplyr)
+library(stats)
+library(qvalue)
+
+
+# Extract expression matrix (log-normalized counts)
+expression_matrix <- GetAssayData(nucSamples_female, layer = "data")
+# Extract X score
+x_score <- nucSamples_female$X_to_Autosome_Ratio
+# Function to compute correlation and p-values for each gene
+compute_gene_correlations <- function(expr_matrix, score_vector) {
+  cor_results <- apply(expr_matrix, 1, function(gene_expr) {
+    cor.test(gene_expr, score_vector, method = "spearman", exact = F, use = "complete.obs")
+  })
+  
+  # Extract correlation values and p-values
+  cor_values <- sapply(cor_results, function(x) x$estimate)
+  p_values <- sapply(cor_results, function(x) x$p.value)
+  
+  # Adjust p-values for multiple testing using Benjamini-Hochberg FDR correction
+  adj_p_values <- p.adjust(p_values, method = "BH")
+  
+  # Compute q-values using qvalue package
+  q_values <- qvalue(p_values)$qvalues
+  
+  # Convert to data frame and rank by absolute correlation
+  cor_df <- data.frame(
+    gene = rownames(expr_matrix),
+    correlation = cor_values,
+    p_value = p_values,
+    adj_p_value = adj_p_values,
+    q_value = q_values
+  ) %>%
+    arrange(desc(abs(correlation)))
+  
+  return(cor_df)
+}
+# Run correlation analysis
+gene_correlations <- compute_gene_correlations(expression_matrix, x_score)
+# Show top 20 genes with strongest correlation
+head(gene_correlations, 20)
+hist(gene_correlations$p_value)
+hist(gene_correlations$adj_p_value)
+hist(gene_correlations$q_value)
+
+write_csv(gene_correlations, file = "results/20250404_Figure5_Xchromosome/SpearmanCorrelationsTo_XAratio.csv")
+saveRDS(gene_correlations, file = "data/20250404_Figure5_Xchromosome/XAratio_CorrelationOfAllGenes.rds")
+
+```
+
+Make a correlation plot and show the X-related genes and where they land
+```{r}
+# Flag X-linked genes in your full data frame
+gene_correlations <- gene_correlations %>%
+  mutate(x_linked = ifelse(gene %in% x_genes, "X-linked", "Other"))
+
+# Identify the top 10 X-linked genes (most positive correlations)
+top10_x <- gene_correlations %>%
+  filter(x_linked == "X-linked", correlation > 0) %>%
+  arrange(desc(correlation)) %>%
+  head(10)
+
+# Identify the bottom 10 X-linked genes (most negative correlations)
+bottom10_x <- gene_correlations %>%
+  filter(x_linked == "X-linked", correlation < 0) %>%
+  arrange(correlation) %>%  # ascending order so the most negative are first
+  head(10)
+
+# Combine the top and bottom sets
+top_bottom_x <- bind_rows(top10_x, bottom10_x)
+
+# Add a new column for labeling: label only genes in the top or bottom 10 X-linked group
+gene_correlations <- gene_correlations %>%
+  mutate(logP = -log10(adj_p_value),
+         gene_label = ifelse(gene %in% top_bottom_x$gene, gene, NA))
+
+# Create the full plot:
+# - All genes are plotted as points (with their y-axis position determined by the reordered gene name)
+# - Only the top/bottom X-linked genes get annotated via ggrepel.
+p <- ggplot(gene_correlations, aes(x = correlation, y = reorder(gene, correlation))) +
+  # Plot all genes; color points by adjusted p-value.
+  geom_point(aes(color = adj_p_value), size = 3, alpha = 0.8) +
+  # Color gradient: red = more significant, blue = less significant.
+  scale_color_gradient(low = "red", high = "blue", limits = c(0, 0.01)) +
+  # Label only the selected X-linked genes (top/bottom).
+  geom_text_repel(aes(label = gene_label),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  segment.color = "black",
+                  segment.size = 0.5,
+                  max.overlaps = Inf) +
+  labs(title = "Gene Correlations with X to Autosome Ratio",
+       x = "Correlation with X to Autosome Ratio",
+       y = NULL,  # or "Gene" if you want a y-axis title
+       color = "Adjusted P-Value") +
+  theme_classic() +
+  # Remove y-axis text and ticks
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+pdf(file = "figures/20250404_Figure5_Xchromosome/CorrelationPlot_XAratio.pdf", height = 8, width = 4)
+# Display the plot
+print(p + NoLegend())
+legend <- get_legend(p)
+cowplot::plot_grid(legend)
+dev.off()
+```
+
+
+
+
+
+
+
+
+```{r}
+autosomal_gene_correlations <- gene_correlations[!gene_correlations$gene %in% x_genes, ]
+```
+
+```{r}
+# Prepare a ranked gene list for GSEA
+gene_list <- gene_correlations$correlation
+names(gene_list) <- gene_correlations$gene  # Assign gene names
+gene_list <- sort(gene_list, decreasing = TRUE)  # Sort genes by log2FoldChange
+
+# Prepare a ranked gene list for GSEA without the X-linked genes
+autosomal_gene_list <- autosomal_gene_correlations$correlation
+names(autosomal_gene_list) <- autosomal_gene_correlations$gene  # Assign gene names
+autosomal_gene_list <- sort(autosomal_gene_list, decreasing = TRUE)  # Sort genes by log2FoldChange
+```
+
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+# Run GSEA for GO terms
+gsea_go_allgenesCorr <- gseGO(
+  geneList = gene_list,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "ALL",  # Use "ALL" for biological process, cellular component, and molecular function
+  minGSSize = 10,
+  maxGSSize = 500,
+  pvalueCutoff = 0.05,
+  verbose = TRUE,
+  #scoreType = "pos",  # Adjust if needed
+  nPermSimple = 10000  # Increase if needed
+)
+
+# Run GSEA for GO terms
+gsea_go_autosomalCorr <- gseGO(
+  geneList = autosomal_gene_list,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "ALL",  # Use "ALL" for biological process, cellular component, and molecular function
+  minGSSize = 10,
+  maxGSSize = 500,
+  pvalueCutoff = 0.05,
+  verbose = TRUE,
+  #scoreType = "pos",  # Adjust if needed
+  nPermSimple = 10000  # Increase if needed
+)
+
+
+saveRDS(gsea_go_allgenesCorr, file = "data/20250404_Figure5_Xchromosome/XAratio_GeneCorr_GSEA.rds")
+saveRDS(gsea_go_autosomalCorr, file = "data/20250404_Figure5_Xchromosome/XAratio_AutosomalGeneCorr_GSEA.rds")
+
+write_csv(gsea_go_allgenesCorr@result, file = "results/20250404_Figure5_Xchromosome/XAratio_GeneCorr_GSEA.csv")
+write_csv(gsea_go_autosomalCorr@result, file = "results/20250404_Figure5_Xchromosome/XAratio_AutosomalGeneCorr_GSEA.csv")
+
+```
+
+
+
+# checking genes from XIST autosomal stuff ()
+```{r}
+XIST_AutosomalGeneOverlapSheet = read_excel("../functions/Dror_etal_2024_Cell_XISTautosomalPeaks.xlsx")
+XIST_AutosomalGeneOverlap = unique(XIST_AutosomalGeneOverlapSheet$Gene) 
+DoHeatmap(nucSamples, features = XIST_AutosomalGeneOverlap, group.by = "XIST_groups")
+```
+
+
+
+# Getting the overlapping genesets from the correlation analyses. 
+
+
+
+
+
+```{r}
+
+
+GOterms_allgenesCorr = gsea_go_allgenesCorr@result$ID
+GOtermss_autosomalCorr = gsea_go_autosomalCorr@result$ID
+# Calculate intersection (common GO terms)
+common_terms <- intersect(GOterms_allgenesCorr, GOtermss_autosomalCorr)
+
+# Calculate unique GO terms for each set
+unique_allgenes <- setdiff(GOterms_allgenesCorr, GOtermss_autosomalCorr)
+unique_autosomal <- setdiff(GOtermss_autosomalCorr, GOterms_allgenesCorr)
+
+# Print out the counts
+cat("Number of GO terms in All Genes:", length(GOterms_allgenesCorr), "\n")
+cat("Number of GO terms in Autosomal:", length(GOtermss_autosomalCorr), "\n")
+cat("Number of common GO terms:", length(common_terms), "\n")
+cat("Unique to All Genes:", length(unique_allgenes), "\n")
+cat("Unique to Autosomal:", length(unique_autosomal), "\n")
+
+
+
+pdf("figures/20250404_Figure5_Xchromosome/VennDiagram_GSEA_XAratioCorrelation.pdf", width = 6, height = 8)
+# Create the Venn diagram
+venn.plot <- venn.diagram(
+  x = list(
+    "All Genes" = GOterms_allgenesCorr, 
+    "Autosomal" = GOtermss_autosomalCorr
+  ),
+  filename = NULL,         # Draw to the current device (no file saving)
+  fontfamily = "sans",
+  cat.fontfamily = "sans",
+  fontface = "bold",
+  fill = c("#800020", "#808000"),
+  alpha = 0.5,
+  category.names = c("X-genes included", "X-genes removed"),
+  main = NULL,
+  main.cex = 1.5,
+  cat.cex = 1.2,
+  margin = 0.1,
+  rotation.degree = 90,    # Rotate diagram 90 degrees for vertical arrangement
+  # Adjust the label positions as needed; these values are a starting point:
+  cat.pos = c(180, 0)
+)
+
+# Draw the plot on a new page
+grid.newpage()
+grid.draw(venn.plot)
+dev.off()
+```
+
+# Let's plot some key GSEA dot plots for these common themes
+
+
+```{r}
+# 3. (Optional) Simplify the full GSEA results to reduce redundancy.
+# Note: simplify works on the whole object so that semantic similarity is correctly computed.
+allGenes_PositiveCorr = filter(gsea_go_allgenesCorr, ONTOLOGY == "BP", p.adjust < 0.05, qvalue < 0.05, enrichmentScore > 0.4) %>%
+  pairwise_termsim(showCategory = nrow(gsea_go_allgenesCorr)) %>%
+  simplify(cutoff = 0.7, by = "p.adjust", select_fun = min)
+allGenes_NegativeCorr = filter(gsea_go_allgenesCorr, ONTOLOGY == "BP", p.adjust < 0.05, qvalue < 0.05, enrichmentScore < -0.4) %>%
+  pairwise_termsim(showCategory = nrow(gsea_go_allgenesCorr)) %>%
+  simplify(cutoff = 0.7, by = "p.adjust", select_fun = min)
+autosomeGenes_PositiveCorr = filter(gsea_go_autosomalCorr, ONTOLOGY == "BP", p.adjust < 0.05, qvalue < 0.05, enrichmentScore > 0.4) %>% 
+  pairwise_termsim(showCategory = nrow(gsea_go_autosomalCorr)) %>%
+  simplify(cutoff = 0.7, by = "p.adjust", select_fun = min)
+autosomeGenes_NegativeCorr = filter(gsea_go_autosomalCorr, ONTOLOGY == "BP", p.adjust < 0.05, qvalue < 0.05, enrichmentScore < -0.4) %>% 
+  pairwise_termsim(showCategory = nrow(gsea_go_autosomalCorr)) %>%
+  simplify(cutoff = 0.7, by = "p.adjust", select_fun = min)
+
+p1 = treeplot(allGenes_PositiveCorr, offset.params = list(bar_tree = rel(5)), showCategory = 20)
+p2 = treeplot(autosomeGenes_PositiveCorr, offset.params = list(bar_tree = rel(5)), showCategory = 20)
+
+p3 = treeplot(allGenes_NegativeCorr, offset.params = list(bar_tree = rel(5)), showCategory = 20)
+p4 = treeplot(autosomeGenes_NegativeCorr, offset.params = list(bar_tree = rel(5)), showCategory = 20)
+(p1 + p2) / (p3 + p4)+
+    plot_annotation(title = "Simplified Tree plot - BP - cutoff enrichscore abs(0.4) - top = positive corr, bottom = negative corr, left = all genes, right = autosome only genes")
+
+pdf("figures/20250404_Figure5_Xchromosome/SimplifiedGSEA_results_BP.pdf", width = 19, height = 8)
+(p1 + p2) / (p3 + p4)+
+    plot_annotation(title = "Simplified Tree plot - BP - cutoff enrichscore abs(0.4) - top = positive corr, bottom = negative corr, left = all genes, right = autosome only genes")
+dev.off()
+
+
+
+
+```
+
+
+```{r}
+negative_plotsets = c("wound healing", "regulation of angiogenesis", "acute inflammatory response", "leukocyte cell-cell adhesion")
+positive_plotsets = c("axonogenesis", "spinal cord development", "embryonic limb morphogenesis", "smoothened signaling pathway", "carboxylic acid catabolic process")
+```
+
+
+```{r}
+selected_pathways <- c(positive_plotsets, negative_plotsets)  
+
+# Filter the GSEA results for only the selected GO term Descriptions
+df_allgenes  <- gsea_go_allgenesCorr@result
+df_autosomal <- gsea_go_autosomalCorr@result
+
+df_allgenes_sel  <- df_allgenes[df_allgenes$Description %in% selected_pathways, ]
+df_autosomal_sel <- df_autosomal[df_autosomal$Description %in% selected_pathways, ]
+
+# Add a column to indicate the source (cluster)
+df_allgenes_sel$Cluster  <- "X-genes included"
+df_autosomal_sel$Cluster <- "X-genes removed"
+
+# Combine the filtered data frames
+combined_df <- rbind(df_allgenes_sel, df_autosomal_sel)
+
+# Create a new column for significance (for point sizing)
+combined_df$log_padj <- -log10(combined_df$p.adjust)
+
+# (Optional) Add a Direction column if needed (here just for reference)
+combined_df$Direction <- ifelse(combined_df$Description %in% positive_plotsets, "Positive", "Negative")
+
+# Set a factor level for Description to fix the column order (positive terms first, then negative)
+combined_df$Description <- factor(combined_df$Description, levels = selected_pathways)
+combined_df$Cluster <- factor(combined_df$Cluster, levels = c("X-genes removed", "X-genes included"))
+
+# Create the dot plot:
+# - x-axis: GO term Description (each column)
+# - y-axis: Cluster (2 rows)
+p <- ggplot(combined_df, aes(x = Description, y = Cluster)) +
+  geom_point(aes(size = log_padj, color = enrichmentScore)) +
+  scale_color_gradientn(
+    colors = c("#F4901E", "white", "#BC1E2D"),
+    values = rescale(c(min(combined_df$enrichmentScore), 0, max(combined_df$enrichmentScore)))
+  ) +
+  theme_classic() +
+  labs(
+    title = NULL,
+    x = "GO Term Description",
+    y = "Cluster",
+    size = "-log10(p.adjust)",
+    color = "Enrichment Score"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.text.y = element_text(size = 12))
+
+# Display the plot
+print(p)
+
+# (Optional) Save the plot to a file, e.g. PDF:
+pdf("figures/20250404_Figure5_Xchromosome/XAratioCorrelation_GSEA_selected_GO_terms_dotplot.pdf", width = 10, height = 4.5)
+print(p)
+dev.off()
+
+```
+
+
+# Hallmark Inflammation
+
+```{r}
+# — 1. Make sure you’ve got your hallmarks loaded —  
+library(msigdbr)
+library(UCell)
+
+# Define the gene sets of interest
+selected_sets <- c(
+  "HALLMARK_ADIPOGENESIS",
+  "HALLMARK_ANGIOGENESIS",
+  "HALLMARK_APICAL_JUNCTION",
+  "HALLMARK_APICAL_SURFACE",
+  "HALLMARK_APOPTOSIS",
+  "HALLMARK_COMPLEMENT",
+  "HALLMARK_E2F_TARGETS",
+  "HALLMARK_GLYCOLYSIS",
+  "HALLMARK_HEDGEHOG_SIGNALING",
+  "HALLMARK_IL2_STAT5_SIGNALING",
+  "HALLMARK_IL6_JAK_STAT3_SIGNALING",
+  "HALLMARK_INFLAMMATORY_RESPONSE",
+  "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+  "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+  "HALLMARK_NOTCH_SIGNALING",
+  "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+  "HALLMARK_P53_PATHWAY",
+  "HALLMARK_PEROXISOME",
+  "HALLMARK_PI3K_AKT_MTOR_SIGNALING",
+  "HALLMARK_PROTEIN_SECRETION",
+  "HALLMARK_REACTIVE_OXYGEN_SPECIES_PATHWAY",
+  "HALLMARK_TGF_BETA_SIGNALING",
+  "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+  "HALLMARK_WNT_BETA_CATENIN_SIGNALING"
+)
+
+
+# Retrieve all Hallmark H sets
+hallmark_h <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  filter(gs_name %in% selected_sets)
+
+# — 2. Build a named list: names = gs_name, values = character vector of genes  
+hallmark_signatures <- hallmark_h %>% 
+  group_by(gs_name) %>% 
+  summarize(genes = list(unique(gene_symbol)), .groups = "drop") %>% 
+  # deframe turns a two‐column tibble (name, list) into a named list
+  deframe()
+
+# Check:
+str(hallmark_signatures)
+# Named list of length 25, each element is a character vector of gene symbols.
+
+# — 3. Run UCell scoring on all of them at once —  
+#    This will add one metadata column per signature, named exactly after each gs_name.
+seurat_obj <- AddModuleScore_UCell(
+  obj      = nucSamples_female,
+  features = hallmark_signatures,
+  assay    = "RNA",    # or your assay of choice
+  slot     = "counts"  # raw data recommended for UCell
+)
+
+
+```
+
+
+```{r}
+# 1) your original plot
+p1 <- VlnPlot_scCustom(
+  subset(seurat_obj, Xa_called != "Unknown"),
+  features   = "HALLMARK_INFLAMMATORY_RESPONSE_UCell",
+  split.by   = "BroadCategory",
+  group.by   = "Xa_called",
+  pt.size    = 0,
+  colors_use = pal_broad
+)
+
+# 2) inject split_ident
+p1[[1]]$data <- p1[[1]]$data %>%
+  mutate(split_ident = paste0(split, "_", ident))
+
+# 3) define the order you want for the BroadCategory
+desired_splits <- levels(nucSamples_female$BroadCategory)
+ident_levels   <- c("XaXa","XaXi")
+
+# 4) build the exact vector of levels for split_ident
+split_ident_levels <- as.vector(
+  outer(desired_splits, ident_levels, paste, sep = "_")
+)
+
+# 5) re‐level your data so the violins come out in that order
+p1[[1]]$data <- p1[[1]]$data %>%
+  mutate(
+    split      = factor(split,      levels = desired_splits),
+    split_ident= factor(split_ident,levels = split_ident_levels)
+  )
+
+# 6) remap the x‐aesthetic to your new, ordered split_ident
+p1[[1]]$mapping$x <- as.name("split_ident")
+
+# 7) rebuild the 1‐test‐per‐category list
+comparisons_list <- desired_splits %>%
+  map(~ c(paste0(.x, "_XaXa"), paste0(.x, "_XaXi")))
+
+# 8) compute a new y‐limit if needed
+ymax <- max(p1[[1]]$data$HALLMARK_INFLAMMATORY_RESPONSE, na.rm = TRUE) * 1.7
+
+# 9) finally, add your comparisons *and* relabel the x‐axis to just ident
+p1 +
+  stat_compare_means(
+    aes(group = split_ident),
+    comparisons = comparisons_list,
+    method      = "wilcox.test",
+    label       = "p.value",
+    hide.ns     = FALSE
+  ) +
+  ylim(0, ymax) +
+  scale_x_discrete(
+    limits = split_ident_levels,
+    labels = function(x) sub(".*_", "", x)
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
+```{r}
+p1 = Stacked_VlnPlot(
+  subset(seurat_obj, Xa_called != "Unknown"),
+  features = c("IL1B", "IL6", "CXCL8", "CCL2"),
+  split.by   = "BroadCategory",
+  group.by   = "Xa_called", colors_use = pal_broad, pt.size = 0.000001
+)
+p2 = Stacked_VlnPlot(
+  subset(seurat_obj, Xa_called != "Unknown"),
+  features = c("IL1B", "IL6", "CXCL8", "CCL2"),
+  split.by   = "BroadCategory",
+  group.by   = "Xa_called", colors_use = pal_broad, pt.size = 0.000001
+)
+p1 | p2
+```
+
+
+

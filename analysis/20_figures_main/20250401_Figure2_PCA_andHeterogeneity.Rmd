@@ -1,0 +1,1209 @@
+---
+title: "20250401_Figure2_PCA_andHeterogeneity"
+output: html_notebook
+---
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+library(Seurat)
+library(scCustomize)
+library(ggprism)
+library(colorRamp2)
+library(tidyverse)
+library(ComplexHeatmap)
+library(ggpattern)
+library(viridis)
+library(scales)
+
+get_legend <- function(my_plot) {
+  tmp <- ggplot_gtable(ggplot_build(my_plot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)
+}
+
+# Immune (Blue) shades
+Immune_shades <- c("#85C1E9", "#5DADE2", "#3498DB", "#2980B9", "#1F618D")
+
+# Neuroectoderm (Red) shades
+Neuroectoderm_shades <- c("#E57373", "#D64A4A", "#B53A3A", "#A83232", "#F5A09E")
+
+# Epithelia (Green) shades
+Epithelia_shades <- c("#A8E6A3", "#7CC47F", "#61B14B", "#88C992", "#4E9835", "#009A44", "#3CB371")
+
+# Stroma (Purple) shades
+Stroma_shades <- c("#D1A1DA", "#C882D5", "#A259C0", "#8E38A7", "#754C96", "#A67BB4", "#B46BB2", "#6B3583")
+
+# Endothelia (Orange) shades
+Endothelia_shades <- c("#F9A14B", "#F47D2D", "#D36E20", "#FFB14C", "#D37D00")
+
+# Combine all shades into one palette
+pal1 <- c(
+  Epithelia_shades,
+  Stroma_shades,
+  Endothelia_shades,
+  Immune_shades,
+  Neuroectoderm_shades
+)
+
+# Assign names to the colors
+names(pal1) <- c(
+  "BPIFB1+_epi",
+  "OCT4+_epi",
+  "LGR5+_epi",
+  "Epithelia_spare",
+  "cycl_epi",
+  "cilia_epi",  
+  "enterochromaffin", # Extra in case you need it
+
+  "fibroblast",
+  "COL12A1+_myofibro",
+  "sm_musc",
+  "chondrocyte",
+  "cycl_mesench",
+  "PAX7+_musc_MSC",
+  "sk_musc",
+  "Stroma_spare2",  # Extra in case you need it
+
+  "vasc_endo",
+  "vein_endo",
+  "lymph_endo",
+  "cycl_endo",
+  "Endothelia_spare",  # Extra in case you need it
+
+  "mac",
+  "infl_mac",
+  "t_cell",
+  "mast",
+  "nkt",
+
+  "GFAP+_astro_radGlia",
+  "neuro",
+  "oligo",
+  "CUX2+_cilia_astro_radGlia",
+  "Ecto_spare"
+)
+
+# Check the final palette
+pal1
+
+
+pal_broad <- c("Stroma" =  "#9467bd", "Epithelia" = "#2ca02c", "Endothelia" = "#ff7f0e", "Neuroectoderm" = "#d62728", "Immune" = "#1f77b4")
+pal_solidcystic <- c("solid" = "#696969", "cystic" = "#D3D3D3")
+pal_epithrichpoor <- c("EpitheliaRich" = "orange", "EpitheliaPoor" = "blue", "epithelia_rich" = "orange", "epithelia_poor"= "blue")
+set.seed(12345)
+
+```
+
+
+#PCA Space
+
+
+## Make PCA Plot
+
+
+```{r}
+# Get the samplees in #####
+obj <- readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+
+metadata <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+obj@meta.data = metadata
+rm(metadata)
+
+Idents(obj) <- obj$HiResNamedOrdered
+
+nucSamples = obj
+```
+# Get only the counts into a Seurat object
+
+Here I pulled all the data into 2 important objects `obj` and `spatial_seu` which both are containing ONLY our raw counts. These will be then combined to make a combined bulk dataset. 
+
+```{r}
+# Step 1: Extract the raw RNA counts
+raw_counts <- GetAssayData(obj, assay = "RNA", layer = "counts")
+# Step 2: Extract the metadata
+metadata <- obj@meta.data
+# Step 3: Create a new Seurat object with only the raw counts and metadata
+obj <- CreateSeuratObject(counts = raw_counts, meta.data = metadata)
+
+Idents(obj) <- "orig.ident"
+```
+
+```{r}
+# Set a seed for reproducibility
+set.seed(12345)  # You can change the number if you prefer a different seed
+
+# Define the number of cells (nuclei) you want to sample per sample
+target_nuclei <- 253  # For all samples except SCT04 and SCT05
+
+obj <- obj %>%
+  subset(cells = unlist(lapply(unique(obj$orig.ident), function(sample) {
+    sample_cells <- WhichCells(obj, idents = sample)
+    
+    if (length(sample_cells) > target_nuclei) {
+      sample(sample_cells, target_nuclei)
+    } else {
+      sample_cells  # If fewer cells than target, keep all
+    }
+  })))
+
+# Verify the downsampled Seurat object
+table(obj$orig.ident)  # Check the cell numbers per sample
+
+obj <- NormalizeData(obj) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA()
+var_genes <- VariableFeatures(object = obj)
+```
+
+
+Show the top 50 variable genes
+```{r}
+# Identify the 10 most highly variable genes
+top15 <- head(VariableFeatures(obj), 15)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(obj)
+plot2 <- LabelPoints(plot = plot1, points = top15, repel = TRUE)
+
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/HVGs_VariablePlot_Top25HVGs.pdf", height = 10, width = 20 )
+CombinePlots(plots = list(plot1, plot2))
+dev.off()
+print(top15)
+```
+
+
+
+
+```{r}
+cts_nucs <- AggregateExpression(obj, 
+                                assays = "RNA", 
+                                group.by = c("orig.ident"), # the cell type is the HiResNamed then the sampels which is the sample AND the solid/cystic
+                                return.seurat = FALSE, 
+                                verbose = T)
+cts_nucs <- round(as.matrix(cts_nucs$RNA))
+
+
+```
+
+
+
+
+```{r}
+# Create a sample information data frame
+sample_conditions <- data.frame(
+  row.names = colnames(cts_nucs),
+  condition = colnames(cts_nucs) # or assign specific group names if needed
+)
+
+#add metadata
+sex <- c(
+  SCT01 = "F",
+  SCT02 = "F",
+  SCT03 = "F",
+  #SCT04 = "F",
+  #SCT05 = "F",
+  SCT06 = "M",
+  SCT09 = "F",
+  SCT10 = "F"
+)
+solid_cystic <- c(
+  SCT01 = "cystic",
+  SCT02 = "solid",
+  SCT03 = "cystic",
+  #SCT04 = "solid",
+  #SCT05 = "solid",
+  SCT06 = "solid",
+  SCT09 = "solid",
+  SCT10 = "cystic"
+)
+epith_RichPoor <- c(
+  SCT01 = "epithelia_poor",
+  SCT02 = "epithelia_rich",
+  SCT03 = "epithelia_poor",
+  #SCT04 = "epithelia_rich",
+  #SCT05 = "epithelia_rich",
+  SCT06 = "epithelia_rich",
+  SCT09 = "epithelia_poor",
+  SCT10 = "epithelia_rich"
+)
+
+sample_conditions <- sample_conditions %>%
+  mutate(
+    sex = sex[condition],
+    solid_cystic = solid_cystic[condition],
+    epith_RichPoor = epith_RichPoor[condition]
+  )
+
+# View the updated data frame
+print(sample_conditions)
+
+```
+
+
+```{r}
+##First I will keep only the HVG 
+cts_nucs <- as.data.frame(cts_nucs[rownames(cts_nucs) %in% var_genes, ])
+
+# Create DESeq2 dataset
+dds <- DESeqDataSetFromMatrix(countData = cts_nucs,
+                              colData = sample_conditions,
+                              design = ~ condition)
+dds <- dds[rowSums(counts(dds)) >= 10,]
+
+
+```
+
+Run PCA with the RLD since there are so few samples. Then run PCA with `prcomp` with it scaled and centered.
+
+```{r}
+# Perform rlog transformation with blind = TRUE
+rld <- rlog(dds, blind = TRUE)
+
+# Perform PCA
+pca <- prcomp(t(assay(rld)), scale. = TRUE, center = TRUE)
+
+# Prepare a dataframe for ggplot, including sample conditions
+pca_df <- as.data.frame(pca$x)
+pca_df <- cbind(pca_df, sample_conditions)
+
+# Calculate percentage of variance explained by each PC
+percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+pdf(file = "figures/20250401_Figure2_PCA_andHeterogeneity/PCAplot.pdf", width = 8, height = 6)
+# Plot the desired PCs (e.g., PC1 vs. PC2)
+ggplot(pca_df, aes(PC1, PC2, label = condition, shape = solid_cystic, color = epith_RichPoor)) +
+    geom_point(size = 6) +                                # Set point size
+    geom_text_repel(vjust = -1, size = 6) +               # Add condition labels
+    #geom_hline(yintercept = 0, linetype = "solid", color = "darkgrey", linewidth = 1) +  # Thicker vertical line at x = 0
+    xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+    ylab(paste0("PC2: ", percentVar[2], "% variance")) + 
+    scale_color_manual(values = pal_epithrichpoor) +     # Apply custom color palette
+    #ggtitle("PCA: PC1 vs PC2") +                          # Update title for the PCs being plotted
+    theme_minimal() +                                     # Apply clean theme
+    theme(legend.position = "right")
+dev.off()
+
+```
+
+
+## Look at correlation plot for PCA1/2
+```{r}
+# Load necessary libraries
+library(pheatmap)
+
+# Extract the rlog-transformed counts matrix
+rld_mat <- assay(rld)
+
+# Extract annotation data for solid_cystic, epith_RichPoor, and sex
+anno <- sample_conditions[,c("sex", "solid_cystic", "epith_RichPoor")]
+
+# Define colors for the annotation
+anno_colors <- list(
+  solid_cystic = pal_solidcystic,
+  epith_RichPoor = pal_epithrichpoor,
+  sex = c("F" = "pink", "M" = "lightblue")
+)
+
+
+# Compute Pearson correlation matrix for the heatmap
+rld_cor_pearson <- cor(rld_mat, method = "pearson")
+# Create a heatmap with annotations
+pheatmap(
+  rld_cor_pearson,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                   # Show row names for clarity
+  show_colnames = TRUE,                   # Show column names (samples)
+  main = "Pearson Correlation Heatmap"
+)
+# Calculate the Sample Distance Matrix and Correlation Matrices
+sampleDistMatrix <- as.matrix(dist(t(rld_mat)))  # Sample Distance Matrix
+# Create a heatmap with annotations
+pheatmap(
+  sampleDistMatrix,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                   # Show row names for clarity
+  show_colnames = TRUE,                   # Show column names (samples)
+  main = "Sample Distance Heatmap", color = colorRampPalette((brewer.pal(n = 7, name = "RdYlBu")))(100)
+)
+
+rld_cor_spearman <- cor(rld_mat, method = "spearman")  # Spearman Correlation Matrix
+# Create a heatmap with annotations
+pheatmap(
+  rld_cor_spearman,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                   # Show row names for clarity
+  show_colnames = TRUE,                   # Show column names (samples)
+  main = "Spearman Correlation Heatmap"
+)
+
+p1 = pheatmap(
+  rld_cor_spearman,
+  annotation_row = anno,                 # Add annotations to the rows
+  annotation_col = anno,                 # Add annotations to the columns
+  annotation_colors = anno_colors,       # Use defined colors for annotations
+  scale = "none",                        # No scaling is applied to a correlation matrix
+  show_rownames = TRUE,                  # Show row names for clarity
+  show_colnames = TRUE,                  # Show column names (samples)
+  display_numbers = TRUE,                # Show the correlation values in each cell
+  number_format = "%.2f",                # Format to display numbers (two decimal places)
+  number_color = "black",                # Color for the numbers
+  main = "Spearman Correlation Heatmap"
+)
+
+
+pdf(file = "figures/20250401_Figure2_PCA_andHeterogeneity/HeatmapOfSpearmanCorrelations.pdf", width = 7, height = 4)
+p1
+dev.off()
+```
+
+
+
+
+## Get the Loadings for the PCA space
+
+### PC1 loadings
+```{r}
+# Extract the loadings for PC2
+pc1_loadings <- pca$rotation[, 1]  # The second column corresponds to PC2
+
+# Sort the loadings to identify the top contributors
+genes_pc1 <- sort(pc1_loadings, decreasing = TRUE)
+
+# Specify the number of top genes to display
+top_n <- 40  # Change this to 20 if you want to see the top 20 genes
+
+### PC1
+
+
+# Create a data frame for the top X genes for plotting
+df_top_1 <- data.frame(
+  Gene = names(genes_pc1)[1:top_n],
+  Contribution = genes_pc1[1:top_n]
+)
+df_bottom_1 <- data.frame(
+  Gene = names(genes_pc1)[(length(genes_pc1)-top_n):length(genes_pc1)],
+  Contribution = genes_pc1[(length(genes_pc1)-top_n):length(genes_pc1)]
+)
+
+# Plot the gene contributions to PC2 for the top X genes
+ggplot(df_top_1, aes(x = reorder(Gene, -Contribution), y = Contribution)) +
+  geom_point() +
+  geom_text(aes(label = Gene), vjust = 1.5, hjust = 1, angle = 90) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),  # Hide the gene names on the x-axis
+        axis.ticks.x = element_blank()) +
+  labs(x = "Genes", y = "Contribution to PC1") +
+  ggtitle(paste("Top", top_n, "Gene Contributions to PC1"))
+# Plot the gene contributions to PC2 for the top X genes
+ggplot(df_bottom_1, aes(x = reorder(Gene, -Contribution), y = Contribution)) +
+  geom_point() +
+  geom_text(aes(label = Gene), vjust = 1.5, hjust = 1, angle = 90) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),  # Hide the gene names on the x-axis
+        axis.ticks.x = element_blank()) +
+  labs(x = "Genes", y = "Contribution to PC1") +
+  ggtitle(paste("Bottom", top_n, "Gene Contributions to PC1"))
+```
+
+
+### PC2 loadings
+```{r}
+# Extract the loadings for PC2
+pc2_loadings <- pca$rotation[, 2]  # The second column corresponds to PC2
+
+# Sort the loadings to identify the top contributors
+genes_pc2 <- sort(pc2_loadings, decreasing = TRUE)
+
+# Specify the number of top genes to display
+top_n <- 40  # Change this to 20 if you want to see the top 20 genes
+
+### pc2
+
+
+# Create a data frame for the top X genes for plotting
+df_top_2 <- data.frame(
+  Gene = names(genes_pc2)[1:top_n],
+  Contribution = genes_pc2[1:top_n]
+)
+df_bottom_2 <- data.frame(
+  Gene = names(genes_pc2)[(length(genes_pc2)-top_n):length(genes_pc2)],
+  Contribution = genes_pc2[(length(genes_pc2)-top_n):length(genes_pc2)]
+)
+
+# Plot the gene contributions to PC2 for the top X genes
+ggplot(df_top_2, aes(x = reorder(Gene, -Contribution), y = Contribution)) +
+  geom_point() +
+  geom_text(aes(label = Gene), vjust = 1.5, hjust = 1, angle = 90) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),  # Hide the gene names on the x-axis
+        axis.ticks.x = element_blank()) +
+  labs(x = "Genes", y = "Contribution to pc2") +
+  ggtitle(paste("Top", top_n, "Gene Contributions to pc2"))
+# Plot the gene contributions to PC2 for the top X genes
+ggplot(df_bottom_2, aes(x = reorder(Gene, -Contribution), y = Contribution)) +
+  geom_point() +
+  geom_text(aes(label = Gene), vjust = 1.5, hjust = 1, angle = 90) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),  # Hide the gene names on the x-axis
+        axis.ticks.x = element_blank()) +
+  labs(x = "Genes", y = "Contribution to pc2") +
+  ggtitle(paste("Bottom", top_n, "Gene Contributions to pc2"))
+```
+```{r}
+library(dplyr)
+library(readr)
+
+# Create a data frame for all PC1 loadings and sort by descending loadings
+df_PC1_loadings <- data.frame(
+  Gene = rownames(pca$rotation),
+  PC1_Loading = pca$rotation[, 1]
+) %>% arrange(desc(PC1_Loading))
+
+# Write PC1 loadings to a CSV file
+write_csv(df_PC1_loadings, file = "results/20250401_Figure2_PCA_andHeterogeneity/PC1_loadings_supplementalFigure.csv")
+
+# Create a data frame for all PC2 loadings and sort by descending loadings
+df_PC2_loadings <- data.frame(
+  Gene = rownames(pca$rotation),
+  PC2_Loading = pca$rotation[, 2]
+) %>% arrange(desc(PC2_Loading))
+
+# Write PC2 loadings to a CSV file
+write_csv(df_PC2_loadings, file = "results/20250401_Figure2_PCA_andHeterogeneity/PC2_loadings_supplementalFigure.csv")
+
+```
+
+
+
+## Run GSEA 
+
+```{r}
+library(clusterProfiler)
+gsea_results_all_pc1 <- gseGO(
+  geneList = genes_pc1,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "ALL",  # "ALL" for Biological Process
+  minGSSize = 10,
+  maxGSSize = 500,
+  pvalueCutoff = 0.05,
+  verbose = TRUE
+)
+
+#saveRDS(gsea_results_all_pc1, file = "data/20241102_Figure2_SolidCystic_exploration/gsea_results_all_pc1.rds")
+
+gsea_results_all_pc2 <- gseGO(
+  geneList = genes_pc2,
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "ALL",  # "ALL" for Biological Process
+  minGSSize = 10,
+  maxGSSize = 500,
+  pvalueCutoff = 0.05,
+  verbose = TRUE
+)
+
+#saveRDS(gsea_results_all_pc2, file = "data/20241102_Figure2_SolidCystic_exploration/gsea_results_all_pc2.rds")
+
+```
+
+Now we save the CSV for supplementary Figure
+```{r}
+write_csv(gsea_results_all_pc1@result, file = "results/20250401_Figure2_PCA_andHeterogeneity/GSEA_PC1_results_supplementalFigure.csv")
+write_csv(gsea_results_all_pc2@result, file = "results/20250401_Figure2_PCA_andHeterogeneity/GSEA_PC2_results_supplementalFigure.csv")
+```
+
+
+Now lets get the simplest way to map the GSEA terms! 
+```{r}
+pc1_pos_go_gsea = filter(gsea_results_all_pc1, ONTOLOGY == "BP", p.adjust < 0.05, NES > 0, qvalue < 0.05, enrichmentScore > 0.4)
+pc1_neg_go_gsea = filter(gsea_results_all_pc1, ONTOLOGY == "BP", p.adjust < 0.05, NES < 0, qvalue < 0.05, enrichmentScore < -0.4)
+
+pc1_pos_go_gsea = pairwise_termsim(pc1_pos_go_gsea, showCategory = nrow(pc1_pos_go_gsea))
+pc1_neg_go_gsea = pairwise_termsim(pc1_neg_go_gsea, showCategory = nrow(pc1_neg_go_gsea))
+
+pc1_pos_go_gsea_simple = simplify(pc1_pos_go_gsea, cutoff = 0.7, by="p.adjust", select_fun=min)
+pc1_neg_go_gsea_simple = simplify(pc1_neg_go_gsea, cutoff = 0.7, by="p.adjust", select_fun=min)
+
+```
+
+
+
+```{r}
+pc2_pos_go_gsea = filter(gsea_results_all_pc2, ONTOLOGY == "BP", p.adjust < 0.05, NES > 0, qvalue < 0.05, enrichmentScore > 0.4)
+pc2_neg_go_gsea = filter(gsea_results_all_pc2, ONTOLOGY == "BP", p.adjust < 0.05, NES < 0, qvalue < 0.05, enrichmentScore < -0.4)
+
+pc2_pos_go_gsea = pairwise_termsim(pc2_pos_go_gsea, showCategory = nrow(pc2_pos_go_gsea))
+pc2_neg_go_gsea = pairwise_termsim(pc2_neg_go_gsea, showCategory = nrow(pc2_neg_go_gsea))
+
+pc2_pos_go_gsea_simple = simplify(pc2_pos_go_gsea, cutoff = 0.7, by="p.adjust", select_fun=min)
+pc2_neg_go_gsea_simple = simplify(pc2_neg_go_gsea, cutoff = 0.7, by="p.adjust", select_fun=min)
+```
+We used a cutoff of 0.4 enrichment score and simplified with 0.7 correlation for the simplify
+
+
+
+
+Lets make a dotplot, of selected top 20 GO terms
+```{r}
+pc1_pos_plotsets = c("translation", "ribosome biogenesis", "immune response", "lymphocyte activation", "leukocyte activation")
+pc1_neg_plotsets = c("chemical synaptic transmission", "cilium organization", "regulation of neuron projection development", "axon guidance", "developmental growth involved in morphogenesis")
+pc2_pos_plotsets = c("regulation of immune response", "innate immune response", "adaptive immune response", "cell killing", "respiratory burst")
+pc2_neg_plotsets = c("circulatory system development", "vasculature development", "angiogenesis", "regulation of cell migration", "ossification")
+
+```
+
+```{r}
+# Combine them in the order you want on the y-axis
+selected_pathways_pc1 <- c(pc1_pos_plotsets, pc1_neg_plotsets)
+
+# -- Step 2: Combine results and label clusters --
+df_pc1_pos <- pc1_pos_go_gsea_simple@result
+df_pc1_pos$Cluster <- "pc1_pos"
+
+df_pc1_neg <- pc1_neg_go_gsea_simple@result
+df_pc1_neg$Cluster <- "pc1_neg"
+
+df_pc1 <- rbind(df_pc1_pos, df_pc1_neg)
+
+# -- Step 3: Subset to keep only the top 5 pos + top 5 neg descriptions --
+df_pc1_sel <- df_pc1[df_pc1$Description %in% selected_pathways_pc1, ]
+
+# -- Step 4: Create a new column for plotting significance --
+df_pc1_sel <- df_pc1_sel %>%
+  mutate(log_padj = -log10(p.adjust))
+
+# -- Step 5: Factor the Description column to fix the y-axis order --
+# (Here, the first item in selected_pathways_pc1 will appear at the bottom in ggplot;
+#  use `rev()` if you prefer the opposite vertical order.)
+df_pc1_sel$Description <- factor(df_pc1_sel$Description, levels = selected_pathways_pc1)
+
+# -- Step 6: Make the dot plot --
+# pc1_colors <- viridis(3, option = "viridis")
+p_pc1 <- ggplot(df_pc1_sel, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = log_padj, color = enrichmentScore)) +
+  scale_color_gradientn(
+    colors = c("red", "white", "blue"),
+    values = rescale(c(min(df_pc1_sel$enrichmentScore), 0, max(df_pc1_sel$enrichmentScore)))
+  ) +
+  theme_classic() +
+  labs(title = "PC1: Representative Positive & Negative \n\ simplified BP GO Terms From top 20",
+       x = "Cluster",
+       y = "GO Term Description",
+       size = "-log10(p.adjust)",
+       color = "Enrichment Score") +
+  theme(axis.text.y = element_text(size = 9))
+
+# Print the PC1 plot
+print(p_pc1)
+
+
+# Combine them in the order you want on the y-axis
+selected_pathways_pc2 <- c(pc2_pos_plotsets, pc2_neg_plotsets)
+
+# -- Step 2: Combine results and label clusters --
+df_pc2_pos <- pc2_pos_go_gsea_simple@result
+df_pc2_pos$Cluster <- "pc2_pos"
+
+df_pc2_neg <- pc2_neg_go_gsea_simple@result
+df_pc2_neg$Cluster <- "pc2_neg"
+
+df_pc2 <- rbind(df_pc2_pos, df_pc2_neg)
+
+# -- Step 3: Subset to keep only the top 5 pos + top 5 neg descriptions --
+df_pc2_sel <- df_pc2[df_pc2$Description %in% selected_pathways_pc2, ]
+
+# -- Step 4: Create a new column for plotting significance --
+df_pc2_sel <- df_pc2_sel %>%
+  mutate(log_padj = -log10(p.adjust))
+
+# -- Step 5: Factor the Description column to fix the y-axis order --
+df_pc2_sel$Description <- factor(df_pc2_sel$Description, levels = selected_pathways_pc2)
+
+# -- Step 6: Make the dot plot --
+# pc2_colors <- viridis(3, option = "magma")
+p_pc2 <- ggplot(df_pc2_sel, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = log_padj, color = enrichmentScore)) +
+  scale_color_gradientn(
+    colors = c("magenta", "white", "darkcyan"),
+    values = rescale(c(min(df_pc2_sel$enrichmentScore), 0, max(df_pc2_sel$enrichmentScore)))
+  ) +
+  theme_classic() +
+  labs(title = "PC2: Representative Positive & Negative \n\ simplified BP GO Terms From top 20",
+       x = "Cluster",
+       y = "GO Term Description",
+       size = "-log10(p.adjust)",
+       color = "Enrichment Score") +
+  theme(axis.text.y = element_text(size = 9))
+
+# Print the PC2 plot
+print(p_pc2)
+
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/GSEA_SelectedGeneSets_DotPlotforPC1PC2.pdf", height = 10, width = 8)
+print(p_pc1)
+print(p_pc2)
+dev.off()
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+########################
+# 1) Plot for PC1 (pos + neg)
+########################
+
+# -- Step 1: Select top 5 GO term descriptions --
+pc1_pos_plotsets <- head(pc1_pos_go_gsea_simple@result$Description, 5)
+pc1_neg_plotsets <- head(pc1_neg_go_gsea_simple@result$Description, 5)
+
+# Combine them in the order you want on the y-axis
+selected_pathways_pc1 <- c(pc1_pos_plotsets, pc1_neg_plotsets)
+
+# -- Step 2: Combine results and label clusters --
+df_pc1_pos <- pc1_pos_go_gsea_simple@result
+df_pc1_pos$Cluster <- "pc1_pos"
+
+df_pc1_neg <- pc1_neg_go_gsea_simple@result
+df_pc1_neg$Cluster <- "pc1_neg"
+
+df_pc1 <- rbind(df_pc1_pos, df_pc1_neg)
+
+# -- Step 3: Subset to keep only the top 5 pos + top 5 neg descriptions --
+df_pc1_sel <- df_pc1[df_pc1$Description %in% selected_pathways_pc1, ]
+
+# -- Step 4: Create a new column for plotting significance --
+df_pc1_sel <- df_pc1_sel %>%
+  mutate(log_padj = -log10(p.adjust))
+
+# -- Step 5: Factor the Description column to fix the y-axis order --
+# (Here, the first item in selected_pathways_pc1 will appear at the bottom in ggplot;
+#  use `rev()` if you prefer the opposite vertical order.)
+df_pc1_sel$Description <- factor(df_pc1_sel$Description, levels = selected_pathways_pc1)
+
+# -- Step 6: Make the dot plot --
+# pc1_colors <- viridis(3, option = "viridis")
+p_pc1 <- ggplot(df_pc1_sel, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = log_padj, color = enrichmentScore)) +
+  scale_color_gradientn(
+    colors = c("red", "white", "blue"),
+    values = rescale(c(min(df_pc1_sel$enrichmentScore), 0, max(df_pc1_sel$enrichmentScore)))
+  ) +
+  theme_classic() +
+  labs(title = "PC1: Top 5 Positive & Negative simplified BP GO Terms",
+       x = "Cluster",
+       y = "GO Term Description",
+       size = "-log10(p.adjust)",
+       color = "Enrichment Score") +
+  theme(axis.text.y = element_text(size = 9))
+
+# Print the PC1 plot
+print(p_pc1)
+
+########################
+# 2) Plot for PC2 (pos + neg)
+########################
+
+# -- Step 1: Select top 5 GO term descriptions --
+pc2_pos_plotsets <- head(pc2_pos_go_gsea_simple@result$Description, 5)
+pc2_neg_plotsets <- head(pc2_neg_go_gsea_simple@result$Description, 5)
+
+# Combine them in the order you want on the y-axis
+selected_pathways_pc2 <- c(pc2_pos_plotsets, pc2_neg_plotsets)
+
+# -- Step 2: Combine results and label clusters --
+df_pc2_pos <- pc2_pos_go_gsea_simple@result
+df_pc2_pos$Cluster <- "pc2_pos"
+
+df_pc2_neg <- pc2_neg_go_gsea_simple@result
+df_pc2_neg$Cluster <- "pc2_neg"
+
+df_pc2 <- rbind(df_pc2_pos, df_pc2_neg)
+
+# -- Step 3: Subset to keep only the top 5 pos + top 5 neg descriptions --
+df_pc2_sel <- df_pc2[df_pc2$Description %in% selected_pathways_pc2, ]
+
+# -- Step 4: Create a new column for plotting significance --
+df_pc2_sel <- df_pc2_sel %>%
+  mutate(log_padj = -log10(p.adjust))
+
+# -- Step 5: Factor the Description column to fix the y-axis order --
+df_pc2_sel$Description <- factor(df_pc2_sel$Description, levels = selected_pathways_pc2)
+
+# -- Step 6: Make the dot plot --
+# pc2_colors <- viridis(3, option = "magma")
+p_pc2 <- ggplot(df_pc2_sel, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = log_padj, color = enrichmentScore)) +
+  scale_color_gradientn(
+    colors = c("magenta", "white", "darkcyan"),
+    values = rescale(c(min(df_pc2_sel$enrichmentScore), 0, max(df_pc2_sel$enrichmentScore)))
+  ) +
+  theme_classic() +
+  labs(title = "PC2: Top 5 Positive & Negative simplified BP GO Terms",
+       x = "Cluster",
+       y = "GO Term Description",
+       size = "-log10(p.adjust)",
+       color = "Enrichment Score") +
+  theme(axis.text.y = element_text(size = 9))
+
+# Print the PC2 plot
+print(p_pc2)
+
+
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/GSEA_Top5_DotPlotforPC1PC2.pdf", height = 10, width = 8)
+print(p_pc1)
+print(p_pc2)
+dev.off()
+
+```
+
+# ***Make the nucSamples to run Genes plotting
+```{r}
+nucSamples = readRDS(file = "data/20240524_Integrations_NucANDall/nucSamples_Harmony_LowResAdded.rds")
+metadata <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+nucSamples@meta.data = metadata
+rm(metadata)
+nucSamples$EpitheliaRichPoor = factor(nucSamples$EpitheliaRichPoor, levels = c("EpitheliaPoor", "EpitheliaRich"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples <- nucSamples
+
+Idents(nucSamples) <- "orig.ident"
+nucSamples <- RenameIdents(nucSamples, "SCT01" = "epitheliaPoor",
+                      "SCT03" = "epitheliaPoor", 
+                      "SCT09" = "epitheliaPoor",
+                       "SCT10" = "epitheliaRich_OCT4hi", 
+                       "SCT02" = "epitheliaRich_OCT4lo",
+                     "SCT06" = "epitheliaRich_OCT4lo")
+nucSamples$EpitheliaSplit <- Idents(nucSamples)
+nucSamples$EpitheliaSplit = factor(nucSamples$EpitheliaSplit, levels = c("epitheliaRich_OCT4hi", "epitheliaPoor", "epitheliaRich_OCT4lo"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples
+DimPlot_scCustom(nucSamples, reduction = "umap.harmony", group.by = "HiResNamedOrdered", colors_use = pal1)
+```
+
+
+## Run the top genes for showing what drives the PCA and if it is from actually higher expressed genes. 
+```{r}
+##############
+# Grab the genes from these top 5 gene sets that overlap and map them onto the HiResNamed split.by = "EpitheliaSplit"
+########
+
+
+
+###########
+# Grab the genes from the loadings in PC1 and PC2 to map onto Heatmap
+##########
+
+
+```
+
+
+
+# Show the BarPlots and UMAP for Fig 2
+
+
+
+```{r}
+### RUN UMAP WITH SPLIT UP PLOTS 
+
+p1 = DimPlot_scCustom(
+    nucSamples, 
+    reduction = "umap.harmony", split.by = "EpitheliaSplit",
+    group.by = "HiResNamedOrdered", colors_use = pal1, split_seurat = T
+) & NoLegend() & ggtitle(NULL) & xlab("umap1") & ylab("umap2")
+print(p1)
+
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/umapSplitByEpithsplit.pdf", height = 7, width = 12)
+print(p1)
+dev.off()
+```
+
+
+```{r}
+dp <- data.frame(group = nucSamples$EpitheliaSplit, annotation = nucSamples$HiResNamedOrdered)
+
+dp$annotation = factor(dp$annotation,levels = c(
+    # Ectoderm
+    "GFAP+_astro_radGlia",
+    "CUX2+_cilia_astro_radGlia",
+    "neuro",
+    "oligo",
+    # Endoderm
+    "enterochromaffin",
+    "BPIFB1+_epi",
+    "OCT4+_epi",
+    "LGR5+_epi",
+    "cilia_epi",
+    "cycl_epi",
+    
+    # Mesoderm
+    "fibroblast",
+    "COL12A1+_myofibro",
+    "PAX7+_musc_MSC",
+    "cycl_mesench",
+    "chondrocyte",
+    "sm_musc",
+    "sk_musc",
+    "vasc_endo",
+    "vein_endo",
+    "lymph_endo",
+    "cycl_endo",
+    "mac",
+    "infl_mac",
+    "t_cell",
+    "nkt",
+    "mast"
+  ))
+df <- dp %>%
+  group_by(annotation, group) %>%
+  summarise(
+    per_anno = n()) %>% data.frame()
+
+df$percent <- 0
+for (i in seq_along(1:nrow(df))){
+    sgnum <- colSums(as.matrix(df[df$group == df[i,"group"],"per_anno"]))
+    df$percent[i] <- df$per_anno[i] / sgnum
+}
+
+p <- ggplot(data = df, mapping = aes(
+  x = `group`, fill = `annotation`, y = `percent`))
+p <- p + geom_col() + theme_classic()+ 
+  
+  #geom_text(aes(label = round(percent, 3)), position = position_stack(vjust = 0.5), size = 3, color = "white") +
+
+  scale_fill_manual(values=pal1, guide = guide_legend(ncol = 1)) + 
+  
+  theme(
+    axis.text.x = element_text(colour = "black", size = rel(1), angle = 45, hjust = 0.8, vjust = 0.8),
+    axis.text.y = element_text(colour = "black", size = rel(1)),
+    axis.title.x = element_text(size = rel(1)),  # Set x-axis label size
+    axis.title.y = element_text(size = rel(1))   # Set y-axis label size
+  ) +
+  labs(x = "SCT molecular category", y = "Proportion of sub-category cell ID")  # Add axis titles
+
+pdf(file = "figures/20250401_Figure2_PCA_andHeterogeneity/BoxPlot_subcat.pdf", width = 4, height = 3)
+options(repr.plot.width=6, repr.plot.height=4)
+p + NoLegend()
+dev.off()
+
+
+dp <- data.frame(group = nucSamples$EpitheliaSplit, annotation = nucSamples$BroadCategory)
+
+dp$annotation = factor(dp$annotation,levels = c("Neuroectoderm" ,"Epithelia" , "Stroma" , "Endothelia" , "Immune" ))
+df <- dp %>%
+  group_by(annotation, group) %>%
+  summarise(
+    per_anno = n()) %>% data.frame()
+
+df$percent <- 0
+for (i in seq_along(1:nrow(df))){
+    sgnum <- colSums(as.matrix(df[df$group == df[i,"group"],"per_anno"]))
+    df$percent[i] <- df$per_anno[i] / sgnum
+}
+
+p <- ggplot(data = df, mapping = aes(
+  x = `group`, fill = `annotation`, y = `percent`))
+p <- p + geom_col() + theme_classic()+ 
+  
+  geom_text(aes(label = round(percent, 3)), position = position_stack(vjust = 0.5), size = 2, color = "white") +
+
+  scale_fill_manual(values=pal_broad) + 
+
+  theme(
+    axis.text.x = element_text(colour = "black", size = rel(1), angle = 45, hjust = 0.8, vjust = 0.8),
+    axis.text.y = element_text(colour = "black", size = rel(1)),
+    axis.title.x = element_text(size = rel(1)),  # Set x-axis label size
+    axis.title.y = element_text(size = rel(1))   # Set y-axis label size
+  ) +
+  
+  labs(x = "SCT molecular category", y = "Proportion of broad category cell ID")  # Add axis titles
+
+pdf(file = "figures/20250401_Figure2_PCA_andHeterogeneity/BoxPlot_broadcat.pdf", width = 6, height = 4)
+options(repr.plot.width=6, repr.plot.height=4)
+p 
+dev.off()
+```
+# Run scProportion Test for Supplemental Figure
+
+```{r}
+######### RUN SCPROPORTION TEST FOR EACH GROUP COMPARED TO REST. AND PLOT JUST THE POSITIVE SIDE. 
+```
+
+```{r}
+library(scProportionTest)
+#Make a new category for SCT10 vs Rest
+Idents(nucSamples) = "EpitheliaSplit"
+nucSamples <- RenameIdents(nucSamples, "epitheliaPoor" = "Other", "epitheliaRich_OCT4lo" = "Other", "epitheliaRich_OCT4hi" = "EpiRich_HiPOU")
+nucSamples$OCT4rest <- Idents(nucSamples)
+Idents(nucSamples) = "HiResNamedOrdered"
+
+prop_test_orig <- sc_utils(nucSamples)
+prop_test_epiRichVpoor_sub <- permutation_test(sc_utils_obj = prop_test_orig, cluster_identity = "HiResNamedOrdered", 
+                              sample_2 = "epitheliaRich_OCT4lo",
+                              sample_1 = "epitheliaPoor",
+                              sample_identity = "EpitheliaSplit", 
+                              n_permutations = 5000
+)
+```
+
+
+```{r}
+plot_perm_epiRP_HiRes <- permutation_plot(prop_test_epiRichVpoor_sub, FDR_threshold = 0.05, log2FD_threshold = 1)
+```
+
+```{r}
+prop_test_epiRichVpoor_brd <- permutation_test(sc_utils_obj = prop_test_orig, cluster_identity = "BroadCategory", 
+                              sample_2 = "epitheliaRich_OCT4lo",
+                              sample_1 = "epitheliaPoor",
+                              sample_identity = "EpitheliaSplit", 
+                              n_permutations = 5000
+)
+```
+
+
+```{r}
+plot_perm_epiRP_Broad <- permutation_plot(prop_test_epiRichVpoor_brd, FDR_threshold = 0.05, log2FD_threshold = 1)
+```
+
+
+```{r}
+prop_test_OCT4hi_sub <- permutation_test(sc_utils_obj = prop_test_orig, cluster_identity = "HiResNamedOrdered", 
+                              sample_2 = "Other",
+                              sample_1 = "EpiRich_HiPOU",
+                              sample_identity = "OCT4rest", 
+                              n_permutations = 5000
+)
+```
+
+
+```{r}
+plot_perm_POUhi_HiRes <- permutation_plot(prop_test_OCT4hi_sub, FDR_threshold = 0.05, log2FD_threshold = 1)
+```
+
+```{r}
+prop_test_OCT4hi_brd <- permutation_test(sc_utils_obj = prop_test_orig, cluster_identity = "BroadCategory", 
+                              sample_2 = "Other",
+                              sample_1 = "EpiRich_HiPOU",
+                              sample_identity = "OCT4rest", 
+                              n_permutations = 5000
+)
+```
+
+```{r}
+plot_perm_POUhi_brd <- permutation_plot(prop_test_OCT4hi_brd, FDR_threshold = 0.05, log2FD_threshold = 1)
+```
+
+
+```{r}
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/PermutationPlotting_AllPlots.pdf", height = 5, width = 6)
+plot_perm_epiRP_HiRes & NoLegend()
+plot_perm_epiRP_Broad & NoLegend()
+plot_perm_POUhi_HiRes & NoLegend()
+plot_perm_POUhi_brd & NoLegend()
+legend <- get_legend(plot_perm_POUhi_brd)
+cowplot::plot_grid(legend)
+dev.off()
+```
+# Run teratoma Bias Score 
+
+### Teratoma Bias score
+```{r}
+
+############################################
+## Teratoma Cell Type Stacked Barplot and Bias Plot
+############################################
+
+# Load required libraries
+library(Seurat)
+library(swne)
+library(perturbLM)
+library(ggplot2)
+library(entropy)
+library(cowplot)
+library(reshape2)
+
+# Define cell type and teratoma assignments from your data
+clusters <- nucSamples@meta.data$HiResNamedOrdered
+names(clusters) <- rownames(nucSamples@meta.data)  # assuming cell barcodes are rownames
+
+ter.id <- nucSamples@meta.data$orig.ident
+names(ter.id) <- rownames(nucSamples@meta.data)
+
+# Convert the named vectors to lists grouping cells by cell type and by teratoma.
+# (If you need to subset to a specific cell line, assign these lists accordingly.)
+clusters.list <- UnflattenGroups(clusters)
+ter.id.list <- UnflattenGroups(ter.id)
+
+# Compute overlap counts: rows are cell types, columns are teratomas
+ter.cluster.counts <- GroupOverlapCounts(clusters.list, ter.id.list)
+
+# Calculate the fraction of cells per teratoma for each cell type
+ter.cluster.frac <- t(ter.cluster.counts) / colSums(ter.cluster.counts)
+ter.cluster.frac <- t(t(ter.cluster.frac) / colSums(ter.cluster.frac))
+ter.counts <- colSums(ter.cluster.counts)
+
+# Compute bias for each cell type:
+# Bias_k = KL.empirical( X_k, overall ) * (total cells in cell type k)
+cluster.div <- apply(ter.cluster.counts, 1, function(x) {
+  KL.empirical(x, colSums(ter.cluster.counts)) * sum(x)
+})
+cluster.div <- sort(cluster.div)
+
+# Create the bias (KL divergence) barplot using ggBarplot:
+cluster.div.bar <- ggBarplot(cluster.div, fill.color = "lightgrey") +
+  coord_flip() +
+  theme(axis.text.y = element_blank())
+
+# Reorder the fraction matrix to match the sorted bias values
+ter.cluster.frac <- ter.cluster.frac[, names(cluster.div)]
+
+# Reshape the fraction matrix for ggplot2
+ter.cluster.df <- setNames(melt(ter.cluster.frac), c("Teratoma", "Cluster", "Frac"))
+
+# --- New code to add cell counts to cluster names ---
+# Compute total cell counts per cell type (cluster)
+cell_counts <- rowSums(ter.cluster.counts)
+# Get the current factor levels for Cluster
+old_levels <- levels(ter.cluster.df$Cluster)
+# Create new labels: "CellType (Count)"
+new_levels <- paste0(old_levels, " (", cell_counts[old_levels], ")")
+# Update the factor levels in the Cluster column
+levels(ter.cluster.df$Cluster) <- new_levels
+# --- End new code ---
+
+# Create the stacked barplot of cell type fractions across teratomas
+stacked.bar <- ggplot(ter.cluster.df) +
+  geom_bar(aes(x = Cluster, y = Frac, fill = Teratoma), stat = "identity", 
+           width = 0.75, color = "black") + 
+  theme_classic() +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(hjust = 1, size = 14, angle = 90, color = "black"),
+        axis.text.y = element_text(size = 16, color = "black")) + 
+  scale_fill_brewer(palette = "Set2") +
+  coord_flip()
+
+# Arrange the stacked barplot and the bias barplot side-by-side
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/dm-ter-human-merged_cluster_teratoma_barplot.pdf", height = 7, width = 8)
+plot_grid(stacked.bar + theme(legend.position = "none"), cluster.div.bar, 
+          align = "h", rel_widths = c(0.65, 0.35))
+dev.off()
+
+# Extract and save the legend separately
+legend <- get_legend(stacked.bar)
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/dm-ter-human-merged_cluster_teratoma_barplot_legend.pdf", height = 7.5, width = 2.5)
+ggdraw(legend)
+dev.off()
+
+# Save results (optional)
+
+
+
+
+
+
+
+############################################
+## Epithelia Split 
+############################################
+
+# Load required libraries
+library(Seurat)
+library(swne)
+library(perturbLM)
+library(ggplot2)
+library(entropy)
+library(cowplot)
+library(reshape2)
+
+# Define cell type and teratoma assignments from your data
+clusters <- nucSamples@meta.data$HiResNamedOrdered
+names(clusters) <- rownames(nucSamples@meta.data)  # assuming cell barcodes are rownames
+
+ter.id <- nucSamples@meta.data$EpitheliaSplit
+names(ter.id) <- rownames(nucSamples@meta.data)
+
+# Convert the named vectors to lists grouping cells by cell type and by teratoma.
+# (If you need to subset to a specific cell line, assign these lists accordingly.)
+clusters.list <- UnflattenGroups(clusters)
+ter.id.list <- UnflattenGroups(ter.id)
+
+# Compute overlap counts: rows are cell types, columns are teratomas
+ter.cluster.counts <- GroupOverlapCounts(clusters.list, ter.id.list)
+
+# Calculate the fraction of cells per teratoma for each cell type
+ter.cluster.frac <- t(ter.cluster.counts) / colSums(ter.cluster.counts)
+ter.cluster.frac <- t(t(ter.cluster.frac) / colSums(ter.cluster.frac))
+ter.counts <- colSums(ter.cluster.counts)
+
+# Compute bias for each cell type:
+# Bias_k = KL.empirical( X_k, overall ) * (total cells in cell type k)
+cluster.div <- apply(ter.cluster.counts, 1, function(x) {
+  KL.empirical(x, colSums(ter.cluster.counts)) * sum(x)
+})
+cluster.div <- sort(cluster.div)
+
+# Create the bias (KL divergence) barplot using ggBarplot:
+cluster.div.bar <- ggBarplot(cluster.div, fill.color = "lightgrey") +
+  coord_flip() +
+  theme(axis.text.y = element_blank())
+
+# Reorder the fraction matrix to match the sorted bias values
+ter.cluster.frac <- ter.cluster.frac[, names(cluster.div)]
+
+# Reshape the fraction matrix for ggplot2
+ter.cluster.df <- setNames(melt(ter.cluster.frac), c("Teratoma", "Cluster", "Frac"))
+
+# --- New code to add cell counts to cluster names ---
+# Compute total cell counts per cell type (cluster)
+cell_counts <- rowSums(ter.cluster.counts)
+# Get the current factor levels for Cluster
+old_levels <- levels(ter.cluster.df$Cluster)
+# Create new labels: "CellType (Count)"
+new_levels <- paste0(old_levels, " (", cell_counts[old_levels], ")")
+# Update the factor levels in the Cluster column
+levels(ter.cluster.df$Cluster) <- new_levels
+# --- End new code ---
+
+# Create the stacked barplot of cell type fractions across teratomas
+stacked.bar <- ggplot(ter.cluster.df) +
+  geom_bar(aes(x = Cluster, y = Frac, fill = Teratoma), stat = "identity", 
+           width = 0.75, color = "black") + 
+  theme_classic() +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank(),
+        axis.text.x = element_text(hjust = 1, size = 14, angle = 90, color = "black"),
+        axis.text.y = element_text(size = 16, color = "black")) + 
+  scale_fill_manual(values = c("epitheliaRich_OCT4hi" = "#FBB040", 
+                               "epitheliaRich_OCT4lo" = "#F15A29", 
+                               "epitheliaPoor" = "#3853A3")) +
+  coord_flip()
+
+# Arrange the stacked barplot and the bias barplot side-by-side
+pdf("figures/20250401_Figure2_PCA_andHeterogeneity/dm-ter-human-merged_EpitheliaSplit_teratoma_barplot.pdf", height = 7, width = 8)
+plot_grid(stacked.bar + theme(legend.position = "none"), cluster.div.bar, 
+          align = "h", rel_widths = c(0.65, 0.35))
+legend <- get_legend(stacked.bar)
+ggdraw(legend)
+dev.off()
+
+# Save results (optional)
+
+
+
+
+
+
+```
+

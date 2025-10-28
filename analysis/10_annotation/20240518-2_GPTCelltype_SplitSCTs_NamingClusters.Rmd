@@ -1,0 +1,243 @@
+---
+title: "GPTCelltype Running Naming"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+
+library(Seurat)
+library(scCustomize)
+library(GPTCelltype)
+library(openai)
+
+
+Sys.setenv(OPENAI_API_KEY = 'sk-proj-hZpcEv3cpX0TsOGHZciOT3BlbkFJjATtIgB2A2BmKHuFGVeZ')
+
+
+```
+
+
+```{r}
+samples_list <- readRDS(file = "data/20240517_SCTsamplesSplit_DGE_Clustering/SamplesList_SCTlistThatCreatedObjects.rds")
+```
+
+
+```{r}
+# Set the idents for HIRES
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.2"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.4"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.3"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.2"
+
+
+```
+
+
+
+```{r}
+# Initialize a list to store marker results
+markers_list <- list()
+
+# Loop through each sample to find markers
+for (sample_name in names(samples_list)) {
+  sample <- samples_list[[sample_name]]
+  # Print a message indicating completion
+  cat("Starting cell markers for", sample_name, "\n")
+  # Find markers
+  markers <- FindAllMarkers(object = sample, only.pos = TRUE, logfc.threshold = 0.25)
+  
+  #arrange in order
+  markers <- arrange(markers, cluster, p_val_adj, desc(avg_log2FC))
+  
+  # Store the results in the list
+  markers_list[[sample_name]] <- markers
+  
+  # Print a message indicating completion
+  cat("Finished cell markers for", sample_name, "\n")
+}
+
+
+```
+
+
+```{r}
+# Initialize an empty list to store results
+results_list_HiRes <- list()
+
+# Loop through each sample and run the cell type annotation and visualization
+for (sample_name in names(markers_list)) {
+  # Retrieve the markers for the current sample
+  markers <- markers_list[[sample_name]]
+  # Print a message indicating completion
+  cat("Starting GPT for", sample_name, "\n")
+  # Perform cell type annotation using the gptcelltype() function
+  res <- gptcelltype(markers, tissuename = 'human sacrococcygeal teratoma, It is OK if you dont know the cell type,', model = 'gpt-4o', topgenenumber = 20)
+  
+  # Print the result to ensure it makes sense (optional)
+  print(res)
+  
+  # Assign the cell type annotations back to the Seurat object
+  samples_list[[sample_name]]@meta.data$celltype_HiRes <- as.factor(res[as.character(Idents(samples_list[[sample_name]]))])
+
+  # Generate and store the DimPlot for the current sample
+  # plot <- DimPlot(samples_list[[sample_name]], group.by = 'celltype_HiRes')
+  # 
+  # # Save the plot to a file (optional)
+  # ggsave(paste0("figures/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/",sample_name, "_celltype_plot_HiRes.png"), plot = plot)
+  # 
+  # Store the results in the list
+  results_list_HiRes[[sample_name]] <- list(res = res, plot = plot)
+}
+
+# Optionally, save the results list to a file for future reference
+saveRDS(results_list_HiRes, file = "results/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/results_list_HiRes.rds")
+
+```
+
+
+
+
+```{r}
+# Set the LOW RES NUMBERS
+Idents(samples_list[["SCT01"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT02"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT03"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT01n"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT06"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT09"]]) <- "RNA_snn_res.0.1"
+Idents(samples_list[["SCT10"]]) <- "RNA_snn_res.0.1"
+```
+
+
+
+```{r}
+# Initialize a list to store marker results
+markers_list <- list()
+
+# Loop through each sample to find markers
+for (sample_name in names(samples_list)) {
+  sample <- samples_list[[sample_name]]
+  
+  # Print a message indicating completion
+  cat("Starting cell markers for", sample_name, "\n")
+  
+  # Find markers
+  markers <- FindAllMarkers(object = sample, only.pos = TRUE, logfc.threshold = 0.25)
+  
+  #arrange in order
+  markers <- arrange(markers, cluster, p_val_adj, desc(avg_log2FC))
+  
+  # Store the results in the list
+  markers_list[[sample_name]] <- markers
+  
+  # Print a message indicating completion
+  cat("Finished cell markers for", sample_name, "\n")
+}
+
+
+```
+
+```{r}
+# Initialize an empty list to store results
+results_list_LoRes <- list()
+
+# Loop through each sample and run the cell type annotation and visualization
+for (sample_name in names(markers_list)) {
+  # Retrieve the markers for the current sample
+  markers <- markers_list[[sample_name]]
+  
+  # Print a message indicating completion
+  cat("Starting GPT for", sample_name, "\n")
+  
+  # Perform cell type annotation using the gptcelltype() function
+  res <- gptcelltype(markers, tissuename = 'human sacrococcygeal teratoma, It is OK if you dont know the cell type,', model = 'gpt-4o', topgenenumber = 20)
+  
+  # Print the result to ensure it makes sense (optional)
+  print(res)
+  
+  # Assign the cell type annotations back to the Seurat object
+  samples_list[[sample_name]]@meta.data$celltype_LoRes <- as.factor(res[as.character(Idents(samples_list[[sample_name]]))])
+# 
+#   # Generate and store the DimPlot for the current sample
+#   plot <- DimPlot(samples_list[[sample_name]], group.by = 'celltype')
+# 
+#   # Save the plot to a file (optional)
+#   ggsave(paste0("figures/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/",sample_name, "_celltype_plot_LoRes.png"), plot = plot)
+  
+  # Store the results in the list
+  results_list_LoRes[[sample_name]] <- list(res = res, plot = plot)
+}
+
+# Optionally, save the results list to a file for future reference
+saveRDS(results_list_LoRes, file = "results/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/results_list_LoRes.rds")
+```
+
+```{r}
+pdf(file = "figures/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/LowRes_GPT-UMAPs.pdf" , width = 18)
+for (sample_name in names(samples_list)) {
+
+  # Generate and store the DimPlot for the current sample
+  plot <- DimPlot_scCustom(samples_list[[sample_name]], group.by = 'celltype_LoRes', label = T, label.box = T, repel = T) + NoLegend()
+  print(plot)
+
+  plot <- DimPlot_scCustom(samples_list[[sample_name]], group.by = 'celltype_LoRes') + NoLegend()
+  print(plot)
+}
+
+dev.off()
+
+pdf(file = "figures/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/HiRes_GPT-UMAPs.pdf" , width = 18)
+for (sample_name in names(samples_list)) {
+
+  # Generate and store the DimPlot for the current sample
+  plot <- DimPlot_scCustom(samples_list[[sample_name]], group.by = 'celltype_HiRes', label = T, label.box = T, repel = T) + NoLegend()
+  print(plot)
+  
+  plot <- DimPlot_scCustom(samples_list[[sample_name]], group.by = 'celltype_HiRes') + NoLegend()
+  print(plot)
+
+  # Save the plot to a file (optional)
+  # ggsave(paste0("figures/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/",sample_name, "_celltype_plot_LoRes.png"), plot = plot)
+}
+dev.off()
+
+```
+
+
+```{r}
+# Loop through each element in the results_list_HiRes and save the `res` component as a CSV
+for (sample_name in names(results_list_HiRes)) {
+  # Extract the `res` component
+  res_data <- results_list_HiRes[[sample_name]]$res
+  
+  # Convert to a data frame
+  res_df <- as.data.frame(res_data)
+  
+  # Write to a CSV file
+  write.csv(res_df, paste0("results/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/",sample_name, "_HiRes_GPT_results.csv"), row.names = TRUE)
+}
+
+# Loop through each element in the results_list_LoRes and save the `res` component as a CSV
+for (sample_name in names(results_list_LoRes)) {
+  # Extract the `res` component
+  res_data <- results_list_LoRes[[sample_name]]$res
+  
+  # Convert to a data frame
+  res_df <- as.data.frame(res_data)
+  
+  # Write to a CSV file
+  write.csv(res_df, paste0("results/20240518-2_GPTCelltype_SplitSCTs_NamingClusters/",sample_name, "_LoRes_GPT_results.csv"), row.names = TRUE)
+}
+```
+
+
+```{r}
+sessionInfo()
+```
+

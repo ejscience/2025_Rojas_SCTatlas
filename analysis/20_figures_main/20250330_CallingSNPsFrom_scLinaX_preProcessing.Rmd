@@ -1,0 +1,2138 @@
+---
+title: "20250330_CallingSNPsFrom_scLinaX_preProcessing"
+output: html_notebook
+---
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/tank/data/ernesto/analysis/SCT01-10_scRNA_GitCloned")) 
+knitr::opts_chunk$set(echo = TRUE)
+
+# Immune (Blue) shades
+Immune_shades <- c("#85C1E9", "#5DADE2", "#3498DB", "#2980B9", "#1F618D")
+
+# Neuroectoderm (Red) shades
+Neuroectoderm_shades <- c("#E57373", "#D64A4A", "#B53A3A", "#A83232")
+
+# Epithelia (Green) shades
+Epithelia_shades <- c("#A8E6A3", "#7CC47F", "#61B14B", "#88C992", "#4E9835", "#009A44", "#3CB371")
+
+# Stroma (Purple) shades
+Stroma_shades <- c("#D1A1DA", "#C882D5", "#A259C0", "#8E38A7", "#754C96", "#A67BB4", "#B46BB2")
+
+# Endothelia (Orange) shades
+Endothelia_shades <- c("#F9A14B", "#F47D2D", "#D36E20", "#FFB14C")
+
+# Combine all shades into one palette
+pal1 <- c(
+  Epithelia_shades,
+  Stroma_shades,
+  Endothelia_shades,
+  Immune_shades,
+  Neuroectoderm_shades
+)
+
+# Assign names to the colors
+names(pal1) <- c(
+  "BPIFB1+_epi",
+  "OCT4+_epi",
+  "LGR5+_epi",
+  "Epithelia_spare",
+  "cycl_epi",
+  "cilia_epi",  
+  "enterochromaffin", # Extra in case you need it
+
+  "fibroblast",
+  "COL12A1+_myofibro",
+  "sm_musc",
+  "chondrocyte",
+  "cycl_mesench",
+  "PAX7+_musc_MSC",
+  "sk_musc",
+
+  "vasc_endo",
+  "vein_endo",
+  "lymph_endo",
+  "cycl_endo",
+
+  "mac",
+  "infl_mac",
+  "t_cell",
+  "mast",
+  "nkt",
+
+  "GFAP+_astro_radGlia",
+  "neuro",
+  "oligo",
+  "CUX2+_cilia_astro_radGlia"
+)
+
+# Check the final palette
+pal1
+
+
+pal_broad <- c("Stroma" =  "#9467bd", "Epithelia" = "#2ca02c", "Endothelia" = "#ff7f0e", "Neuroectoderm" = "#d62728", "Immune" = "#1f77b4")
+pal_solidcystic <- c("solid" = "#696969", "cystic" = "#D3D3D3")
+pal_epithrichpoor <- c("EpitheliaRich" = "orange", "EpitheliaPoor" = "blue", "epithelia_rich" = "orange", "epithelia_poor"= "blue")
+pal_samples <- c(
+  "SCT02" = "#66C2A5",
+  "SCT06" = "#FC8D62",
+  "SCT09" = "#8DA0CB",
+  "SCT01" = "#E78AC3",
+  "SCT03" = "#A6D854",
+  "SCT10" = "#FFD92F"
+)
+set.seed(12345)
+```
+
+```{r}
+# Get the samplees in #####
+nucSamples <- readRDS("data/nucSamples_Harmony_LowResAdded.rds")
+
+metadata <- readRDS(file = "data/MetadataFor_HiResNamedOrdered_SCT01renamed_chromaffinPosChanged_removedRedund_20250331.rds")
+nucSamples@meta.data = metadata
+rm(metadata)
+nucSamples$EpitheliaRichPoor = factor(nucSamples$EpitheliaRichPoor, levels = c("EpitheliaPoor", "EpitheliaRich"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples <- nucSamples
+
+Idents(nucSamples) <- "orig.ident"
+nucSamples <- RenameIdents(nucSamples, "SCT01" = "epitheliaPoor",
+                      "SCT03" = "epitheliaPoor", 
+                      "SCT09" = "epitheliaPoor",
+                       "SCT10" = "epitheliaRich_OCT4hi", 
+                       "SCT02" = "epitheliaRich_OCT4lo",
+                     "SCT06" = "epitheliaRich_OCT4lo")
+nucSamples$EpitheliaSplit <- Idents(nucSamples)
+nucSamples$EpitheliaSplit = factor(nucSamples$EpitheliaSplit, levels = c("epitheliaPoor", "epitheliaRich_OCT4lo", "epitheliaRich_OCT4hi"))
+
+Idents(nucSamples) <- nucSamples$HiResNamedOrdered
+
+nucSamples
+DimPlot_scCustom(nucSamples, reduction = "umap.harmony", group.by = "HiResNamedOrdered", colors_use = pal1)
+
+```
+
+
+```{r}
+metadata <- readRDS(file = "data/20250110_XChromosome_InferCNV_WITHxaRatios/metadataForXchr.rds")
+# Use grep to find the column names matching the pattern
+x <- grep(pattern = "XIST|XACT|chrX|chrY|Autosome|infercnv_sub", 
+          x = colnames(metadata), 
+          value = TRUE)
+# Use dplyr to select only those columns from metadata
+metadata <- metadata %>%
+  dplyr::select(all_of(x))
+
+nucSamples <- AddMetaData(nucSamples, metadata = metadata)
+nucSamples@meta.data <- nucSamples@meta.data %>%
+  mutate(Xa_called = case_when(
+    X_to_Autosome_Ratio > 0.036 & proportion_dupli_chrX > 0.5 ~ "XaXa",
+    X_to_Autosome_Ratio < 0.036 & proportion_dupli_chrX < 0.5 ~ "XaXi",
+    TRUE ~ "Unknown"
+  ))
+
+# Create a new metadata column "Sex" and assign "Female" by default
+nucSamples$Sex <- "Female"
+# Assign "Male" to cells from SCT06
+nucSamples$Sex[nucSamples$orig.ident == "SCT06"] <- "Male"
+
+# Now, create a new metadata column "Xa_Called_Sex"
+# For cells with orig.ident equal to "SCT06", assign "XaXi_male".
+# For all other cells, keep the Xa_called value.
+nucSamples@meta.data <- nucSamples@meta.data %>%
+  mutate(Xa_Called_Sex = case_when(
+    orig.ident == "SCT06" ~ "XaXi_male",
+    TRUE ~ Xa_called
+  ))
+
+
+rm(metadata, x)
+
+
+nucSamples_female = subset(nucSamples, subset = orig.ident != "SCT06")
+
+```
+
+
+
+
+```{r Dont run since this was a test, eval=FALSE, include=FALSE}
+
+valid_barcodes <- nucSamples$cells # These are the cells we are using for scRNA-seq analyses. 
+
+###########
+# SCT01
+###########
+# 1. Load your QC-passed SNP data
+snp_df_1 <- read_tsv("/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT01_nuc.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz")
+
+# 2. Rename the cell_barcode
+#    - Replace the trailing "-RNA" with "-1"
+#    - Prepend "SCT01_" to the front
+snp_df_1 <- snp_df_1 %>%
+  mutate(
+    cell_barcode = str_replace(cell_barcode, "-RNA$", "-1"),
+    cell_barcode = str_c("SCT01n_", cell_barcode)
+  )
+
+# 3. Filter barcodes to only those present in your Seurat object
+#    (assuming 'sobj$cells' is a character vector of valid cell names)
+snp_df_1 <- snp_df_1 %>%
+  filter(cell_barcode %in% valid_barcodes)
+
+# (Optional) Re-check or compute allelic ratio
+snp_df_1 <- snp_df_1 %>%
+  mutate(
+    total = REFcount + ALTcount,
+    alt_ratio = if_else(total > 0, ALTcount / total, NA_real_)
+  )
+
+# Now snp_df_1 only contains rows for barcodes that exist in your Seurat object
+# and have the new naming convention "SCT01_...-1".
+gene_allelic_1 <- snp_df_1 %>%
+  group_by(Gene) %>%
+  summarise(REF_total = sum(REFcount),
+            ALT_total = sum(ALTcount),
+            total = REF_total + ALT_total,
+            gene_alt_ratio = if_else(total > 0, ALT_total / total, NA_real_))
+
+# View summary
+print(gene_allelic_1)
+
+
+
+###############
+# SCT02
+###############
+# Load your QC-passed SNP data
+snp_df_2 <- read_tsv("/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT02.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz")
+
+# 2. Rename the cell_barcode
+#    - Replace the trailing "-RNA" with "-1"
+#    - Prepend "SCT01_" to the front
+snp_df_2 <- snp_df_2 %>%
+  mutate(
+    cell_barcode = str_replace(cell_barcode, "-RNA$", "-1"),
+    cell_barcode = str_c("SCT02_", cell_barcode)
+  )
+
+# 3. Filter barcodes to only those present in your Seurat object
+#    (assuming 'sobj$cells' is a character vector of valid cell names)
+snp_df_2 <- snp_df_2 %>%
+  filter(cell_barcode %in% valid_barcodes)
+
+# (Optional) Re-check or compute allelic ratio
+snp_df_2 <- snp_df_2 %>%
+  mutate(
+    total = REFcount + ALTcount,
+    alt_ratio = if_else(total > 0, ALTcount / total, NA_real_)
+  )
+
+# Now snp_df_2 only contains rows for barcodes that exist in your Seurat object
+# and have the new naming convention "SCT01_...-1".
+gene_allelic_2 <- snp_df_2 %>%
+  group_by(Gene) %>%
+  summarise(REF_total = sum(REFcount),
+            ALT_total = sum(ALTcount),
+            total = REF_total + ALT_total,
+            gene_alt_ratio = if_else(total > 0, ALT_total / total, NA_real_))
+
+# View summary
+print(gene_allelic_2)
+
+
+
+
+###############
+# SCT03
+###############
+# Load your QC-passed SNP data
+snp_df_3 <- read_tsv("/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT03.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz")
+
+# Calculate allelic ratio per SNP
+snp_df_3 <- snp_df_3 %>%
+  mutate(total = REFcount + ALTcount,
+         alt_ratio = if_else(total > 0, ALTcount / total, NA_real_))
+
+# Aggregate by gene (assuming one gene per SNP after filtering)
+gene_allelic_3 <- snp_df_3 %>%
+  group_by(Gene) %>%
+  summarise(REF_total = sum(REFcount),
+            ALT_total = sum(ALTcount),
+            total = REF_total + ALT_total,
+            gene_alt_ratio = if_else(total > 0, ALT_total / total, NA_real_))
+
+# View summary
+print(gene_allelic_3)
+
+
+
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+
+valid_barcodes <- nucSamples$cells # These are the cells we are using for scRNA-seq analyses. 
+
+# Define the function process_snp_data
+process_snp_data <- function(qc_file, sample_id, valid_barcodes, meta_df) {
+  # qc_file: path to the QC-passed SNP file (e.g., "SCT01_nuc.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz")
+  # sample_id: string identifier for the sample (e.g., "SCT01")
+  # valid_barcodes: a character vector of valid cell barcodes (already in desired format, e.g., "SCT01_AGAAGTACACACTGGC-1")
+  # meta_df: a tibble of cell metadata, which must include a "cell_barcode" column
+  
+  # Load the QC SNP data
+  snp_df <- read_tsv(qc_file)
+  
+  # Rename the cell_barcode: replace "-RNA" with "-1" and prepend the sample id
+  snp_df <- snp_df %>%
+    mutate(
+      cell_barcode = str_replace(cell_barcode, "-RNA$", "-1"),
+      cell_barcode = str_c(sample_id, "_", cell_barcode)
+    )
+  
+  # Filter the SNP data to keep only cells that are in valid_barcodes
+  snp_df <- snp_df %>%
+    filter(cell_barcode %in% valid_barcodes)
+  
+  # Join the SNP data with cell metadata (based on cell_barcode)
+  snp_df <- snp_df %>%
+    left_join(meta_df, by = "cell_barcode")
+  
+  # Compute total allele counts and the allelic ratio for each SNP call
+  snp_df <- snp_df %>%
+    mutate(
+      total = REFcount + ALTcount,
+      alt_ratio = if_else(total > 0, ALTcount / total, NA_real_)
+    )
+  
+  return(snp_df)
+}
+
+# Example usage:
+# Assume your Seurat object is 'sobj' and its metadata is stored in sobj@meta.data.
+# Convert your metadata to a tibble with cell_barcode as a column:
+meta_df <- nucSamples@meta.data %>%
+  rownames_to_column(var = "cell_barcode") %>%
+  dplyr::select(cell_barcode, orig.ident, Sex, HiResNamedOrdered, BroadCategory, Xa_called, Xa_Called_Sex, X_to_Autosome_Ratio, proportion_dupli_chrX) %>%
+  rename(SCTsample = orig.ident, SubCategory_cellType = HiResNamedOrdered, BroadCategory_cellType = BroadCategory)
+  
+  
+# And assume you have a vector of valid barcodes (extracted from the metadata)
+valid_barcodes <- meta_df$cell_barcode
+
+# Process the SCT01 data:
+snp_df_SCT01 <- process_snp_data(
+  qc_file = "/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT01_nuc.chrX.snp.call.summary_QC_passed_SNP_df.tsv.gz",
+  sample_id = "SCT01n",
+  valid_barcodes = valid_barcodes,
+  meta_df = meta_df
+)
+
+# Inspect the output:
+print(head(snp_df_SCT01))
+
+
+# Process the SCT02 data:
+snp_df_SCT02 <- process_snp_data(
+  qc_file = "/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT02.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz",
+  sample_id = "SCT02",
+  valid_barcodes = valid_barcodes,
+  meta_df = meta_df
+)
+
+# Inspect the output:
+print(head(snp_df_SCT02))
+
+# Process the SCT02 data:
+snp_df_SCT03 <- process_snp_data(
+  qc_file = "/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT03.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz",
+  sample_id = "SCT03",
+  valid_barcodes = valid_barcodes,
+  meta_df = meta_df
+)
+
+# Inspect the output:
+print(head(snp_df_SCT03))
+
+
+
+# Process the SCT02 data:
+snp_df_SCT06 <- process_snp_data(
+  qc_file = "/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT06.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz",
+  sample_id = "SCT06",
+  valid_barcodes = valid_barcodes,
+  meta_df = meta_df
+)
+
+# Inspect the output:
+print(head(snp_df_SCT06))
+
+# Process the SCT02 data:
+snp_df_SCT09 <- process_snp_data(
+  qc_file = "/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT09.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz",
+  sample_id = "SCT09",
+  valid_barcodes = valid_barcodes,
+  meta_df = meta_df
+)
+
+# Inspect the output:
+print(head(snp_df_SCT09))
+
+
+# Process the SCT02 data:
+snp_df_SCT10 <- process_snp_data(
+  qc_file = "/tank/data/ernesto/analysis/Xchr_SCT_AlleleSpecific/SCT10.chrX.snp.call.summary.tsv_QC_passed_SNP_df.tsv.gz",
+  sample_id = "SCT10",
+  valid_barcodes = valid_barcodes,
+  meta_df = meta_df
+)
+
+# Inspect the output:
+print(head(snp_df_SCT10))
+```
+
+
+
+```{r}
+all_snp_df <- bind_rows(
+  snp_df_SCT01, 
+  snp_df_SCT02, 
+  snp_df_SCT03, 
+  snp_df_SCT06, 
+  snp_df_SCT09, 
+  snp_df_SCT10
+)
+
+# Optionally, inspect the combined data frame
+print(head(all_snp_df))
+
+# Save the combined data frame as an RDS file
+saveRDS(all_snp_df, file = "/tank/data/ernesto/analysis/SCT01-10_scRNA_GitCloned/data/all_snp_dataframe.rds")
+```
+
+
+```{r}
+XCIstatus = read_excel("/tank/data/ernesto/analysis/SCT01-10_scRNA_GitCloned/data/XLinkedGenes_StatusForXCI_fromTukiainen_2017.xlsx")
+data("XCI_ref")
+force(XCI_ref)
+
+# Decided that XCIstatus had more genes so we will use that one.
+library(dplyr)
+library(tidyr)
+
+# Create and clean the gene_status_df in one pipeline, we did this because the XCIstatus has a repead of IDS gene and it is inactive in XCI from scLinaX:
+gene_status_df <- data.frame(
+  Gene = XCIstatus$`Gene name`,
+  XCIgeneStatus = XCIstatus$`Reported XCI status`
+) %>%
+  as_tibble() %>% 
+  # Remove the row for IDS where the status is 'unknown'
+  filter(!(Gene == "IDS" & tolower(XCIgeneStatus) == "unknown")) %>%
+  # Remove rows with any NA values
+  drop_na() %>%
+  # Remove duplicate rows (based on both Gene and XCIgeneStatus)
+  distinct()
+
+# Optionally, to check if there are any duplicates by Gene name alone:
+duplicate_genes <- gene_status_df %>%
+  group_by(Gene) %>%
+  filter(n() > 1)
+
+print("Cleaned gene_status_df:")
+print(gene_status_df)
+
+print("Duplicates by gene name (if any):")
+print(duplicate_genes)
+
+
+
+
+
+
+
+# Suppose you have a gene mapping dataframe that looks like this:
+# gene_status_df <- data.frame(
+#   Gene = c("GTPBP6", "LINC00685", "PPP2R3B", ...),
+#   XCIgeneStatus = c("escape", "inactivated", "escape", ...)
+# )
+# (Make sure the gene names in gene_status_df are exactly as they appear as single entries in your snp_df.)
+
+# Step 1. Add a unique row identifier to all_snp_df (so we can collapse later)
+all_snp_df <- all_snp_df %>% 
+  mutate(row_id = row_number())
+
+# Step 2. Expand rows where the Gene column has comma-separated entries.
+# This will produce one row per gene.
+all_snp_df_expanded <- all_snp_df %>%
+  separate_rows(Gene, sep = ",") %>%
+  mutate(Gene = trimws(Gene))  # Remove any leading/trailing whitespace
+
+# Step 3. Join the gene status information (left join so that if a gene is not found, NA is returned)
+all_snp_df_expanded <- all_snp_df_expanded %>% 
+  left_join(gene_status_df, by = "Gene")
+
+# Step 4. Collapse the expanded rows back to one row per original entry.
+# For the XCIgeneStatus column, if there are multiple statuses they will be concatenated (using a comma).
+# Convert to data.table if not already
+dt <- as.data.table(all_snp_df_expanded)
+
+# Identify the columns to take the first occurrence from,
+# excluding the columns we're already aggregating ("Gene", "XCIgeneStatus", "row_id")
+cols_to_first <- setdiff(names(dt), c("Gene", "XCIgeneStatus", "row_id"))
+
+dt_final <- dt[, c(
+    list(
+        Gene = paste(unique(Gene), collapse = ","),
+        XCIgeneStatus = paste(unique(na.omit(XCIgeneStatus)), collapse = ",")
+    ),
+    lapply(.SD, function(x) x[1])
+), 
+by = row_id, 
+.SDcols = cols_to_first
+]
+
+# Remove the row_id column from dt_final.
+dt_final[, row_id := NULL]
+
+# Option 1: If you want to preview dt_final without the row_id column:
+print(head(dt_final))
+
+# Option 2: Find rows where XCIgeneStatus is missing (NA) or an empty string.
+
+# We'll look for NA or an empty string (after trimming any whitespace).
+rows_blank_xci <- dt_final[is.na(XCIgeneStatus) | trimws(XCIgeneStatus) == ""]
+
+if (nrow(rows_blank_xci) == 0) {
+  cat("No rows with blank XCIgeneStatus found.\n")
+} else {
+  cat("Rows with blank XCIgeneStatus:\n")
+  print(rows_blank_xci)
+}
+```
+
+```{r checking the same rows for OG and XCI_added, eval=FALSE, include=FALSE}
+library(data.table)
+library(dplyr)
+
+## -- Check 1: Identify rows that have more than one XCI status --
+
+# In dt_final, look for XCIgeneStatus values that include a comma
+rows_multi_status <- dt_final[grepl(",", XCIgeneStatus)]
+
+cat("Rows with more than one XCI status:\n")
+print(rows_multi_status[, .(row_id, Gene, XCIgeneStatus)])
+
+## -- Check 2: Compare final gene names vs. the original gene names --
+
+# The original all_snp_df might have comma-separated gene entries. 
+# To compare, we need to break out each gene into its own entry and trim whitespace.
+
+# Function to split a vector of comma-separated gene strings into unique, trimmed gene names:
+split_genes <- function(gene_vector) {
+  unique(trimws(unlist(strsplit(paste(gene_vector, collapse = ","), ","))))
+}
+
+# Get unique individual gene names from the original data:
+original_gene_set <- split_genes(all_snp_df$Gene)
+
+# And from the final collapsed data:
+final_gene_set <- split_genes(dt_final$Gene)
+
+# Now check what genes are in final that we did not see originally and vice versa:
+genes_only_in_final <- setdiff(final_gene_set, original_gene_set)
+genes_only_in_original <- setdiff(original_gene_set, final_gene_set)
+
+cat("\nGenes found only in the final dt_final (unexpected):\n")
+print(genes_only_in_final)
+
+cat("\nGenes found only in the original all_snp_df (missing in dt_final):\n")
+print(genes_only_in_original)
+```
+
+```{r}
+saveRDS(dt_final, file = "/tank/data/ernesto/analysis/SCT01-10_scRNA_GitCloned/data/all_snp_dataframe_withXCI_geneStatus.rds")
+
+dt_final_withWrappedVAF = dt_final %>%
+  mutate(
+        WrappedALTratio = pmin(alt_ratio, 1 - alt_ratio))
+
+saveRDS(dt_final_withWrappedVAF, file = "/tank/data/ernesto/analysis/SCT01-10_scRNA_GitCloned/data/all_snp_dataframe_withXCI_geneStatus_WrappedVAFadded.rds")
+
+```
+
+## XIST only reads plot for each cell type
+```{r}
+XISTallelesMAFdata = dt_final %>%
+    filter(
+        str_detect(Gene, "XIST"),   # Keep all XIST in the names
+        total >= 2                    # only keep sites with ≥4 reads
+    ) %>%
+    mutate(
+        VAF = ALTcount / (REFcount + ALTcount),
+        MAF = pmin(VAF, 1 - VAF),
+        # 3. factor your axes so even empty levels appear:
+        BroadCategory = factor(
+            BroadCategory_cellType,
+            levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+        ),
+        Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+        Sample = factor(
+            SCTsample,
+            levels = c("SCT01","SCT02","SCT03","SCT06","SCT09","SCT10")
+        )
+    )
+XISTallelesMAFplot = ggplot(XISTallelesMAFdata, aes(x = Xacall, y = MAF)) +
+    # keep boxplots all black
+    geom_boxplot(outlier.shape = NA, colour = "black") +
+    # colour only the points by BroadCategory
+    geom_jitter(
+        aes(color = BroadCategory),
+        width = 0.2, alpha = 0.7, size = 1.5
+    ) +
+    # use your pal_broad vector
+    scale_color_manual(values = pal_broad, name = "Broad category") +
+    facet_wrap(~ Sex, nrow = 1) +
+    scale_x_discrete(drop = FALSE) +
+    scale_y_continuous(limits = c(0, 0.5),
+                       breaks = c(0, 0.5),
+        labels = c(
+            "Variants from\n1 chromosome",
+            "Variants from\n2 chromosomes"
+        )) +
+    ggtitle("XIST containing variants with more than 2 reads") +
+    labs(x = NULL, y = "Minor‑allele fraction (folded)") +
+    theme_bw() +
+    theme(
+        axis.text.x      = element_text(size = 14),
+        panel.grid.minor = element_blank(),
+        legend.position  = "right"
+    )
+print(XISTallelesMAFplot)
+
+print("Total percent of XIST coming from 1 chr:")
+sum(XISTallelesMAFdata$MAF == 0) / nrow(XISTallelesMAFdata) * 100
+
+pdf("figures/20250330_CallingSNPsFrom_scLinaX_preProcessing/XISTreadsMAF.pdf", width = 3, height = 5)
+print(XISTallelesMAFplot & NoLegend())
+dev.off()
+```
+
+
+
+```{r}
+XIST_dt = XISTallelesMAFdata %>%
+  filter(
+    MAF == 0 
+  )
+
+```
+
+
+
+
+
+```{r}
+min_cells = 2
+dt_XIST_summary <- XIST_dt %>%
+    group_by(SCTsample, POS, BroadCategory_cellType) %>%
+    summarise(
+        n_cells = n(),
+        n_ref   = sum(ALTcount == 0),
+        n_alt   = sum(REFcount == 0),
+        # anything left is mixed:
+        n_mix   = n_cells - n_ref - n_alt,
+        pattern = case_when(
+            n_ref   == n_cells ~ "REF-only",
+            n_alt   == n_cells ~ "ALT-only",
+            TRUE               ~ "Mixed"
+        ),
+        .groups = "drop"
+    ) %>%
+  filter(n_cells >= min_cells)
+# reorder your factor levels for plotting
+dt_tile <- dt_XIST_summary %>%
+    mutate(
+        BroadCategory_cellType = factor(BroadCategory_cellType,
+                                        levels = unique(BroadCategory_cellType)),
+        POS = factor(POS, levels = sort(unique(POS))),
+        pattern = factor(pattern, levels = c("REF-only", "ALT-only", "Mixed"))
+    )
+
+BroadCat_XISTpositionsPlot = ggplot(dt_tile,
+       aes(x = POS, y = BroadCategory_cellType, fill = pattern)) +
+    geom_tile(colour = "white", size = 0.2) +
+    scale_fill_manual(
+        values = c("REF-only" = "blue",
+                   "ALT-only" = "magenta",
+                   "Mixed"    = "green")
+    ) +
+    facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+    labs(
+        x = "Genomic position",
+        y = "Cell type",
+        fill = "Pattern"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        panel.grid = element_blank()
+    )
+BroadCat_XISTpositionsPlot
+
+# reorder your factor levels for plotting
+dt_XIST_summary <- XIST_dt %>%
+    group_by(SCTsample, POS, SubCategory_cellType) %>%
+    summarise(
+        n_cells = n(),
+        n_ref   = sum(ALTcount == 0),
+        n_alt   = sum(REFcount == 0),
+        # anything left is mixed:
+        n_mix   = n_cells - n_ref - n_alt,
+        pattern = case_when(
+            n_ref   == n_cells ~ "REF-only",
+            n_alt   == n_cells ~ "ALT-only",
+            TRUE               ~ "Mixed"
+        ),
+        .groups = "drop"
+    ) %>%
+  filter(n_cells >= min_cells)
+
+dt_tile <- dt_XIST_summary %>%
+    mutate(
+        SubCategory_cellType = factor(SubCategory_cellType,
+                                      levels = unique(SubCategory_cellType)),
+        POS = factor(POS, levels = sort(unique(POS))),
+        pattern = factor(pattern, levels = c("REF-only", "ALT-only", "Mixed"))
+    )
+
+SubCat_XISTpositionsPlot = ggplot(dt_tile,
+       aes(x = POS, y = SubCategory_cellType, fill = pattern)) +
+    geom_tile(colour = "white", size = 0.2) +
+    scale_fill_manual(
+        values = c("REF-only" = "blue",
+                   "ALT-only" = "magenta",
+                   "Mixed"    = "green")
+    ) +
+    facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+    labs(
+        x = "Genomic position",
+        y = "Cell‐type",
+        fill = "Pattern"
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        panel.grid = element_blank()
+    )
+SubCat_XISTpositionsPlot
+
+
+BroadCat_XISTpositionsPlot
+pdf("figures/20250330_CallingSNPsFrom_scLinaX_preProcessing/XISTpositionsREFvALT_TilePlot.pdf", width = 9.7, height = 8)
+print(BroadCat_XISTpositionsPlot)
+dev.off()
+```
+
+
+
+## Plot the Mono and Bi allelic expression of Inactivated genes
+
+
+
+```{r}
+dt_4cts = filter(dt_final_withWrappedVAF, total >= 4) # SCTsample == "SCT02",
+str(dt_4cts)
+
+# 1) Annotate the SNP table
+dt_4cts <- dt_4cts %>%
+  mutate(
+    IsExpressedFrom2Chr = (WrappedALTratio != 0)
+  )
+
+# 2) Get cell‐barcode lists for XIST+ vs XIST–
+CellsXISTpos <- WhichCells(nucSamples, expression = XIST > 0)
+CellsXISTneg <- WhichCells(nucSamples, expression = XIST == 0)
+
+# 3) Subset for the combinations you want
+XaXaXISTneg <- dt_4cts %>%
+  filter(
+    Xa_Called_Sex == "XaXa",
+    cell_barcode %in% CellsXISTneg
+  )
+
+XaXiXISTpos <- dt_4cts %>%
+  filter(
+    Xa_Called_Sex == "XaXi",
+    cell_barcode %in% CellsXISTpos
+  )
+
+
+# Print the table for the number of variants with Bi-allelic or mono-allelic expression
+print("table for the number of variants with Bi-allelic or mono-allelic expression")
+table(XaXaXISTneg$IsExpressedFrom2Chr, XaXaXISTneg$XCIgeneStatus)
+table(XaXiXISTpos$IsExpressedFrom2Chr, XaXiXISTpos$XCIgeneStatus)
+
+
+
+#############
+# summarize by cell
+##########
+
+
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+df_comb <- bind_rows(
+  XaXaXISTneg %>% mutate(Group = "XaXa_XISTneg"),
+  XaXiXISTpos %>% mutate(Group = "XaXi_XISTpos")
+)
+
+
+# 1) Summarize per cell BUT ONLY FOR INACTIVE GENES!!!!
+df_cells <- df_comb %>%
+  filter(XCIgeneStatus == "Inactive") %>%
+  group_by(
+    cell_barcode,
+    SCTsample,
+    Sex,
+    SubCategory_cellType,
+    BroadCategory_cellType,
+    Xa_called,
+    Xa_Called_Sex,
+    Group
+  ) %>%
+  summarise(
+    # TRUE if any variant in that cell is bi-allelic
+    IsCellBiAllelic = any(IsExpressedFrom2Chr),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Allele = if_else(IsCellBiAllelic, "Bi-allelic", "Mono-allelic")
+  )
+# 2) Count cells by Group, cell type, and Allele
+df_cell_counts <- df_cells %>%
+  count(Group, SubCategory_cellType, Allele, name = "n_cells")
+
+# 3) Make the 100% stacked bar plot (% of cells)
+ggplot(df_cell_counts, aes(x = SubCategory_cellType, y = n_cells, fill = Allele)) +
+  geom_col(position = "fill") +
+  facet_wrap(~Group, nrow = 2) +
+  scale_y_continuous(
+    labels = percent_format(1),
+    name   = "% of cells"
+  ) +
+   scale_fill_manual(values = c(
+        "Mono-allelic" = "grey80",
+        "Bi-allelic"   = "grey30"
+      )) +
+  labs(
+    x     = "Cell type",
+    fill  = "Allelic status",
+    title = "Mono- vs Bi-allelic cells per cell type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+
+# BY Broad category
+# 2) Count cells by Group, cell type, and Allele
+df_cell_counts <- df_cells %>%
+  count(Group, BroadCategory_cellType, Allele, name = "n_cells")
+
+# 3) Make the 100% stacked bar plot (% of cells)
+ggplot(df_cell_counts, aes(x = BroadCategory_cellType, y = n_cells, fill = Allele)) +
+  geom_col(position = "fill") +
+  facet_wrap(~Group, nrow = 2) +
+  scale_y_continuous(
+    labels = percent_format(1),
+    name   = "% of cells"
+  ) +
+   scale_fill_manual(values = c(
+        "Mono-allelic" = "grey80",
+        "Bi-allelic"   = "grey30"
+      )) +
+  labs(
+    x     = "Cell type",
+    fill  = "Allelic status",
+    title = "Mono- vs Bi-allelic cells per cell type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+
+
+print("table for the number of Cells that are Mono and Bi-allelic by XaXa vs XaXi")
+table(df_cells$Allele, df_cells$Xa_Called_Sex)
+
+
+
+
+# 1) Precompute total cells per group & category
+counts_per_group <- df_cells %>%
+  count(Group, BroadCategory_cellType, name = "n_cells") %>%
+  group_by(Group, BroadCategory_cellType) %>%
+  summarise(total_cells = sum(n_cells), .groups = "drop")
+
+# 2) Helper to draw one group
+  
+plot_cells_by_group <- function(group_name, legend_pos) {
+  # build a named vector for x‐tick labels
+  lab_df <- counts_per_group %>%
+    filter(Group == group_name) %>%
+    arrange(BroadCategory_cellType)
+  
+  counts_vec <- setNames(lab_df$total_cells, lab_df$BroadCategory_cellType)
+  
+  df_cell_counts %>%
+    filter(Group == group_name) %>%
+    ggplot(aes(BroadCategory_cellType, n_cells, fill = Allele)) +
+      geom_col(position = "fill") +
+      scale_y_continuous(
+        labels = scales::percent_format(1),
+        name   = "% of cells"
+      ) +
+      scale_x_discrete(labels = function(cat) {
+        paste0(cat, " (", counts_vec[cat], ")")
+      }) +
+      scale_fill_manual(values = c(
+        "Mono-allelic" = "grey80",
+        "Bi-allelic"   = "grey30"
+      )) +
+      labs(x = NULL, fill = "Allelic status") +
+      theme_minimal() +
+      theme(
+        axis.text.x     = element_text(angle = 45, hjust = 1),
+        legend.position = legend_pos
+      )
+}
+
+# 3) Draw the two panels
+XaXa_XISTneg_allelicBarPlot <- plot_cells_by_group("XaXa_XISTneg", "none")
+XaXi_XISTpos_allelicBarPlot <- plot_cells_by_group("XaXi_XISTpos", "right")
+
+# 4) Print them
+XaXa_XISTneg_allelicBarPlot / XaXi_XISTpos_allelicBarPlot
+
+pdf("figures/20250330_CallingSNPsFrom_scLinaX_preProcessing/XISTreadsMAF.pdf", width = 5, height = 7)
+print(XaXa_XISTneg_allelicBarPlot / XaXi_XISTpos_allelicBarPlot)
+dev.off()
+
+```
+
+```{r We tried to do by variant but not as informative, eval=FALSE, include=FALSE}
+#######
+# Map onto cell type by variant 
+#######
+
+df_comb <- bind_rows(
+  XaXaXISTneg %>% mutate(Group = "XaXa_XISTneg"),
+  XaXiXISTpos %>% mutate(Group = "XaXi_XISTpos")
+)
+
+# 2) Keep only the inactive genes
+df_inactive <- df_comb %>%
+  filter(XCIgeneStatus == "Inactive")
+
+# 1) Build a summary table with both counts
+df_counts <- df_inactive %>%
+  group_by(Group, SubCategory_cellType) %>%
+  summarise(
+    bi    = sum(IsExpressedFrom2Chr),
+    mono  = n() - bi,
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols      = c(bi, mono),
+    names_to  = "Allele",
+    values_to = "Count"
+  ) %>%
+  mutate(Allele = recode(Allele,
+                         bi   = "Bi-allelic",
+                         mono = "Mono-allelic"
+  ))
+
+# 2) Plot
+ggplot(df_counts, aes(x = SubCategory_cellType, y = Count, fill = Allele)) +
+  geom_col() +
+  facet_wrap(~Group, nrow = 2, scales = "free_y") +
+  labs(
+    x    = "Cell type",
+    y    = "Number of variants",
+    fill = "Expression",
+    title= "Mono- vs Bi-allelic variants per cell type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+ggplot(df_counts, aes(SubCategory_cellType, Count, fill = Allele)) +
+  geom_col(position = "fill") +
+  facet_wrap(~Group, nrow = 2) +
+  scale_y_continuous(labels = scales::percent_format(1), 
+                     name   = "% of variants") +
+  labs(
+    x     = "Cell type",
+    fill  = "Expression",
+    title = "Proportion mono- vs bi-allelic variants per cell type"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# OLDER CODE---------------------------------
+
+```{r}
+snp_df_SCT02 = rename(snp_df_SCT02, Sample_ID = orig.ident)
+force(XCI_ref)
+data("AIDA_QCREF")
+QCREF = run_RefGeneQC(
+  snp_df_SCT02,
+  XCI_ref,
+  SNP_DETECTION_DP = 30,
+  SNP_DETECTION_MAF = 0.1,
+  SAMPLE_NUM_THR = 1,
+  HE_allele_cell_number_THR = 50,
+  QC_total_allele_THR = 10
+)
+
+scLinaX_res <- run_scLinaX(ASE_df=snp_df_SCT02,XCI_ref=XCI_ref,QCREF=AIDA_QCREF,
+                             Inactive_Gene_ratio_THR=0.05,SNP_DETECTION_DP=30,SNP_DETECTION_MAF=0.1,QC_total_allele_THR=10,
+                             HE_allele_cell_number_THR=50,REMOVE_ESCAPE=TRUE,PVAL_THR=0.01,RHO_THR=0.5)
+Annotation_ASE = dplyr::select(nucSamples@meta.data, cells, HiResNamedOrdered) %>%
+    rename(cell_barcode = cells, Annotation = HiResNamedOrdered)
+
+summary<-summarize_scLinaX(scLinaX_res,QC_total_allele_THR=10,Annotation=NULL)
+cell_type_summary<-summarize_scLinaX(scLinaX_res,QC_total_allele_THR=10,Annotation=Annotation_ASE)
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+# 1–2. Filter & compute VAF
+df2 <- dt_final %>%
+  filter(
+    XCIgeneStatus == "Inactive",   # drop escapes
+    total >= 4                    # only keep sites with ≥4 reads
+  ) %>%
+  mutate(
+    VAF = ALTcount / (REFcount + ALTcount),
+    # 3. factor your axes so even empty levels appear:
+    BroadCategory = factor(
+      BroadCategory_cellType,
+      levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+    ),
+    Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+    Sample = factor(
+      SCTsample,
+      levels = c("SCT02","SCT06","SCT01","SCT03","SCT09","SCT10")
+    )
+  )
+
+# 4. Top row: VAF by BroadCategory_cellType
+p1 <- ggplot(df2, aes(x = BroadCategory, y = VAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ Sample, nrow = 1, scales = "free_x") +
+  scale_x_discrete(drop = FALSE) +           # keep all factor levels even if empty
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    legend.position  = "none"
+  )
+
+# 5. Bottom row: VAF by Xa_called
+p2 <- ggplot(df2, aes(x = Xacall, y = VAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ Sample, nrow = 1) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(size = 10),
+    panel.grid.minor = element_blank()
+  )
+
+# 6. Stack them in two rows (top row twice the height of bottom)
+(p1 / p2)
+
+
+
+# 1–2. Filter & compute VAF
+df2 <- dt_final %>%
+  filter(
+    XCIgeneStatus == "Escape",   # drop escapes
+    total >= 4                    # only keep sites with ≥4 reads
+  ) %>%
+  mutate(
+    VAF = ALTcount / (REFcount + ALTcount),
+    # 3. factor your axes so even empty levels appear:
+    BroadCategory = factor(
+      BroadCategory_cellType,
+      levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+    ),
+    Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+    Sample = factor(
+      SCTsample,
+      levels = c("SCT02","SCT06","SCT01","SCT03","SCT09","SCT10")
+    )
+  )
+
+# 4. Top row: VAF by BroadCategory_cellType
+p1.2 <- ggplot(df2, aes(x = BroadCategory, y = VAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ Sample, nrow = 1, scales = "free_x") +
+  scale_x_discrete(drop = FALSE) +           # keep all factor levels even if empty
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    legend.position  = "none"
+  )
+
+# 5. Bottom row: VAF by Xa_called
+p2.2 <- ggplot(df2, aes(x = Xacall, y = VAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ Sample, nrow = 1) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(size = 10),
+    panel.grid.minor = element_blank()
+  )
+
+# 6. Stack them in two rows (top row twice the height of bottom)
+(p1.2 / p2.2)
+
+
+
+df3 = dt_final %>%
+    filter(
+        str_detect(Gene, "XIST"),   # Keep all XIST in the names
+        total >= 2                    # only keep sites with ≥4 reads
+    ) %>%
+    mutate(
+        VAF = ALTcount / (REFcount + ALTcount),
+        MAF = pmin(VAF, 1 - VAF),
+        # 3. factor your axes so even empty levels appear:
+        BroadCategory = factor(
+            BroadCategory_cellType,
+            levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+        ),
+        Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+        Sample = factor(
+            SCTsample,
+            levels = c("SCT01","SCT02","SCT03","SCT06","SCT09","SCT10")
+        )
+    )
+
+# 4. Top row: VAF by BroadCategory_cellType
+p1.3 <- ggplot(df3, aes(x = BroadCategory, y = VAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ Sample, nrow = 1, scales = "free_x") +
+  scale_x_discrete(drop = FALSE) +           # keep all factor levels even if empty
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    legend.position  = "none"
+  )
+
+# 5. Bottom row: VAF by Xa_called
+p2.3 <- ggplot(df3, aes(x = Xacall, y = VAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5, size = 1.5) +
+  facet_wrap(~ Sample, nrow = 1) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(size = 10),
+    panel.grid.minor = element_blank()
+  )
+
+# 6. Stack them in two rows (top row twice the height of bottom)
+(p1.3 / p2.3)
+
+```
+
+```{r}
+ggplot(df3, aes(x = VAF, y = Xa_called, fill = BroadCategory)) +
+     geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+     facet_wrap(~ Sample, nrow = 1) +
+     scale_x_continuous(limits = c(0,1)) +
+     scale_fill_manual(values = pal_broad) +
+     labs(x = "VAF", y = NULL) +
+     ggtitle("XIST/TSIX,XIST/XIST,TSIX variants with more than 2 reads") +
+     theme_ridges() +
+     theme(legend.position = "right")
+ggplot(df3, aes(x = MAF, y = Xa_called, fill = BroadCategory)) +
+    geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+    facet_wrap(~ Sample, nrow = 1) +
+    scale_x_continuous(limits = c(0,0.5)) +
+    scale_fill_manual(values = pal_broad) +
+    labs(x = "MAF", y = NULL) +
+    ggtitle("XIST/TSIX,XIST/XIST,TSIX variants with more than 2 reads") +
+    theme_ridges() +
+    theme(legend.position = "right")
+```
+
+
+
+
+
+```{r}
+df2 <- dt_final %>%
+  filter(
+    XCIgeneStatus == "Escape",   # drop escapes
+    total >= 4                    # only keep sites with ≥4 reads
+  ) %>%
+  mutate(
+    VAF = ALTcount / (REFcount + ALTcount),
+    MAF = pmin(VAF, 1 - VAF),
+    # 3. factor your axes so even empty levels appear:
+    BroadCategory = factor(
+      BroadCategory_cellType,
+      levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+    ),
+    Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+    Sample = factor(
+      SCTsample,
+      levels = c("SCT02","SCT06","SCT01","SCT03","SCT09","SCT10")
+    )
+  )
+ggplot(df2, aes(x = VAF, y = Xa_called, fill = BroadCategory)) +
+     geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+     facet_wrap(~ Sample, nrow = 1) +
+     scale_x_continuous(limits = c(0,1)) +
+     scale_fill_manual(values = pal_broad) +
+     labs(x = "VAF", y = NULL) +
+     ggtitle("ESCAPE variants with more than 4 reads") +
+     theme_ridges() +
+     theme(legend.position = "right")
+ggplot(df2, aes(x = MAF, y = Xa_called, fill = BroadCategory)) +
+    geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+    facet_wrap(~ Sample, nrow = 1) +
+    scale_x_continuous(limits = c(0,.5)) +
+    scale_fill_manual(values = pal_broad) +
+    labs(x = "MAF", y = NULL) +
+    ggtitle("ESCAPE variants with more than 4 reads") +
+    theme_ridges() +
+    theme(legend.position = "right")
+
+df2.1 <- dt_final %>%
+  filter(
+    XCIgeneStatus == "Inactive",   # drop escapes
+    total >= 4                    # only keep sites with ≥4 reads
+  ) %>%
+  mutate(
+    VAF = ALTcount / (REFcount + ALTcount),
+    MAF = pmin(VAF, 1 - VAF),
+    # 3. factor your axes so even empty levels appear:
+    BroadCategory = factor(
+      BroadCategory_cellType,
+      levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+    ),
+    Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+    Sample = factor(
+      SCTsample,
+      levels = c("SCT02","SCT06","SCT01","SCT03","SCT09","SCT10")
+    )
+  )
+ggplot(df2.1, aes(x = VAF, y = Xa_called, fill = BroadCategory)) +
+     geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+     facet_wrap(~ Sample, nrow = 1) +
+     scale_x_continuous(limits = c(0,1)) +
+     scale_fill_manual(values = pal_broad) +
+     labs(x = "VAF", y = NULL) +
+     ggtitle("INACTIVE variants with more than 4 reads") +
+     theme_ridges() +
+     theme(legend.position = "right")
+ggplot(df2.1, aes(x = MAF, y = Xa_called, fill = BroadCategory)) +
+     geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+     facet_wrap(~ Sample, nrow = 1) +
+     scale_x_continuous(limits = c(0,.5)) +
+     scale_fill_manual(values = pal_broad) +
+     labs(x = "MAF", y = NULL) +
+     ggtitle("INACTIVE variants with more than 4 reads") +
+     theme_ridges() +
+     theme(legend.position = "right")
+```
+
+
+
+
+
+
+```{r}
+p1 <- ggplot(df2, aes(x = MAF, y = Xa_called, fill = BroadCategory)) +
+    geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+    facet_wrap(~ Sex, nrow = 1) +
+    scale_x_continuous(
+        limits = c(0, 0.5),
+        breaks = c(0, 0.5),
+        labels = c(
+            "Variants from\n1 chromosome",
+            "Variants from\n2 chromosomes"
+        )
+    ) +
+    scale_fill_manual(values = pal_broad) +
+    labs(x = "Minor‑allele fraction (folded)", y = NULL) +
+    ggtitle("ESCAPE variants with more than 4 reads") +
+    theme_ridges() +
+    theme(
+        legend.position = "none",
+        axis.text.x     = element_text(angle = 90, vjust = 0.5, hjust = 1)
+    )
+
+p2 <- ggplot(df2.1, aes(x = MAF, y = Xa_called, fill = BroadCategory)) +
+    geom_density_ridges(alpha = 0.7, scale = 1.2, rel_min_height = 0.01) +
+    facet_wrap(~ Sex, nrow = 1) +
+    scale_x_continuous(
+        limits = c(0, 0.5),
+        breaks = c(0, 0.5),
+        labels = c(
+            "Variants from\n1 chromosome",
+            "Variants from\n2 chromosomes"
+        )
+    ) +
+    scale_fill_manual(values = pal_broad) +
+    labs(x = "Minor‑allele fraction (folded)", y = NULL) +
+    ggtitle("INACTIVE variants with more than 4 reads") +
+    theme_ridges() +
+    theme(
+        legend.position = "right",
+        axis.text.x     = element_text(angle = 90, vjust = 0.5, hjust = 1)
+    )
+
+# stack them
+p1 + p2
+
+pdf("figures/20250330_CallingSNPsFrom_scLinaX_preProcessing/RidgePlot_VAFsFoldedToGofrom_0to0_5_ForSexAndBroadCategory.pdf", width = 14, height = 7)
+print(p1 + p2)
+dev.off()
+```
+
+
+
+
+
+
+
+```{r}
+df3 = dt_final %>%
+    filter(
+        str_detect(Gene, "XIST"),   # Keep all XIST in the names
+        total >= 2                    # only keep sites with ≥4 reads
+    ) %>%
+    mutate(
+        VAF = ALTcount / (REFcount + ALTcount),
+        MAF = pmin(VAF, 1 - VAF),
+        # 3. factor your axes so even empty levels appear:
+        BroadCategory = factor(
+            BroadCategory_cellType,
+            levels = c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")
+        ),
+        Xacall = factor(Xa_called, levels = c("XaXi","XaXa", "Unknown")),
+        Sample = factor(
+            SCTsample,
+            levels = c("SCT01","SCT02","SCT03","SCT06","SCT09","SCT10")
+        )
+    )
+p1 = ggplot(df3, aes(x = Xacall, y = MAF)) +
+    # keep boxplots all black
+    geom_boxplot(outlier.shape = NA, colour = "black") +
+    # colour only the points by BroadCategory
+    geom_jitter(
+        aes(color = BroadCategory),
+        width = 0.2, alpha = 0.7, size = 1.5
+    ) +
+    # use your pal_broad vector
+    scale_color_manual(values = pal_broad, name = "Broad category") +
+    facet_wrap(~ Sex, nrow = 1) +
+    scale_x_discrete(drop = FALSE) +
+    scale_y_continuous(limits = c(0, 0.5),
+                       breaks = c(0, 0.5),
+        labels = c(
+            "Variants from\n1 chromosome",
+            "Variants from\n2 chromosomes"
+        )) +
+    ggtitle("XIST containing variants with more than 2 reads") +
+    labs(x = NULL, y = "Minor‑allele fraction (folded)") +
+    theme_bw() +
+    theme(
+        axis.text.x      = element_text(size = 14),
+        panel.grid.minor = element_blank(),
+        legend.position  = "right"
+    )
+print(p1)
+```
+
+
+```{r This was an extra testing graph but no need to continue using it, eval=FALSE, include=FALSE}
+library(dplyr)
+
+# assuming df3 already has a VAF column
+cells_to_highlight <- df3 %>%
+  filter(MAF > 0.4) %>%
+  pull(cell_barcode) %>%
+  unique()
+
+
+library(ggplot2)
+library(patchwork)
+
+# re‑build your main plotting df and add the flag
+df3.1 <- dt_final %>%
+  filter(XCIgeneStatus == "Inactive", total >= 4) %>%
+  mutate(
+    VAF          = ALTcount/(REFcount+ALTcount),
+    MAF = pmin(VAF, 1 - VAF),
+    highlight    = cell_barcode %in% cells_to_highlight,
+    BroadCategory= factor(BroadCategory_cellType,
+                          levels=c("Endothelia","Epithelia","Immune","Neuroectoderm","Stroma")),
+    Xacall       = factor(Xa_called, levels=c("XaXi","XaXa","Unknown")),
+    Sample       = factor(SCTsample,
+                          levels=c("SCT02","SCT06","SCT01","SCT03","SCT09","SCT10"))
+  )
+
+# top row: boxplots in black, dots colored
+ggplot(df3.1, aes(x = BroadCategory, y = MAF)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(
+    aes(color = highlight),    # only the points get the red/grey mapping
+    width = 0.2, size = 1.5, alpha = 0.6
+  ) +
+  scale_color_manual(values = c(`FALSE` = "grey40", `TRUE` = "red"), guide = FALSE) +
+  facet_wrap(~ Sex, nrow = 1, scales = "free_x") +
+  labs(x = NULL, y = "MAF") +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+# bottom row
+p2 <- ggplot(df3.1, aes(x = Xacall, y = MAF)) +
+  # black boxplots
+  geom_boxplot(outlier.shape = NA, colour = "black") +
+
+  # grey points (non‐highlighted)
+  geom_jitter(
+    data        = subset(df3.1, !highlight),
+    aes(x = Xacall, y = MAF),
+    colour      = "grey40",
+    width       = 0.2,
+    height      = 0,
+    size        = 1.5,
+    alpha       = 0.6,
+    inherit.aes = FALSE
+  ) +
+
+  # red points (highlighted)
+  geom_jitter(
+    data        = subset(df3.1, highlight),
+    aes(x = Xacall, y = MAF),
+    colour      = "red",
+    width       = 0.2,
+    height      = 0,
+    size        = 1.5,
+    alpha       = 0.8,
+    inherit.aes = FALSE
+  ) +
+
+  # same faceting
+  facet_wrap(~ Sex, nrow = 1) +
+
+  # keep every Xacall level
+  scale_x_discrete(drop = FALSE) +
+
+  # mirror your other figure’s y‐axis:
+  scale_y_continuous(
+    limits = c(0, 0.5),
+    breaks = c(0, 0.5),
+    labels = c(
+      "Variants from\n1 chromosome",
+      "Variants from\n2 chromosomes"
+    )
+  ) +
+
+  # same title & labels
+  ggtitle("INACTIVE variants with more than 4 reads") +
+  labs(x = NULL, y = "Minor‑allele fraction (folded)") +
+
+  # same theme tweaks
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(size = 14),
+    axis.text.y      = element_text(angle = 0, hjust = 1),
+    panel.grid.minor = element_blank(),
+    legend.position  = "none"
+  )
+
+
+# stack them
+
+p1 + p2
+
+pdf("figures/20250330_CallingSNPsFrom_scLinaX_preProcessing/XISTvariantBoxPlot_HighMAFloadedOnInactiveBoxPlot.pdf", width = 14, height = 4)
+print(p1 + p2)
+dev.off()
+```
+
+
+```{r}
+
+
+
+
+
+```
+
+
+
+
+```{r}
+dt_XIST_summary <- dt_final %>%
+  filter(str_detect(Gene, "XIST"), total >= 2) %>%
+  group_by(SCTsample, POS, SubCategory_cellType, BroadCategory_cellType) %>%
+  summarise(
+    n_cells = n(),
+    n_ref   = sum(ALTcount == 0),
+    n_alt   = sum(REFcount == 0),
+    # anything left is mixed:
+    n_mix   = n_cells - n_ref - n_alt,
+    pattern = case_when(
+      n_ref   == n_cells ~ "REF-only",
+      n_alt   == n_cells ~ "ALT-only",
+      TRUE               ~ "Mixed"
+    ),
+    .groups = "drop"
+  )
+
+
+# collapse across all SNP sites within each sample×celltype
+dt_plot <- dt_XIST_summary %>%
+  # keep only REF‐only and Mixed (drop pure ALT if you like)
+  #filter(pattern %in% c("REF-only","Mixed")) %>%
+  group_by(SCTsample, SubCategory_cellType, pattern) %>%
+  summarise(cells = sum(n_cells), .groups = "drop") %>%
+  group_by(SCTsample, SubCategory_cellType) %>%
+  mutate(frac = cells / sum(cells))
+
+ggplot(dt_plot,
+       aes(x = SubCategory_cellType, y = frac, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"),
+    name   = "Expression\npattern"
+  ) +
+  facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Fraction of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+ggplot(dt_plot,
+       aes(x = SubCategory_cellType, y = cells, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"),
+    name   = "Expression\npattern"
+  ) +
+  facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Number of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+ggplot(dt_plot,
+       aes(x = SubCategory_cellType, y = cells, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"),
+    name   = "Expression\npattern"
+  ) +
+  #facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Number of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+```{r}
+# reorder your factor levels for plotting
+dt_tile <- dt_XIST_summary %>%
+  mutate(
+   BroadCategory_cellType = factor(BroadCategory_cellType,
+                                  levels = unique(BroadCategory_cellType)),
+    POS = factor(POS, levels = sort(unique(POS)))
+  )
+
+ggplot(dt_tile,
+       aes(x = POS, y = BroadCategory_cellType, fill = pattern)) +
+  geom_tile(colour = "white", size = 0.2) +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green")
+  ) +
+  facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Genomic position",
+    y = "Cell‐type",
+    fill = "Pattern"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    panel.grid = element_blank()
+  )
+
+
+# reorder your factor levels for plotting
+dt_tile <- dt_XIST_summary %>%
+  mutate(
+   SubCategory_cellType = factor(SubCategory_cellType,
+                                  levels = unique(SubCategory_cellType)),
+    POS = factor(POS, levels = sort(unique(POS)))
+  )
+
+ggplot(dt_tile,
+       aes(x = POS, y = SubCategory_cellType, fill = pattern)) +
+  geom_tile(colour = "white", size = 0.2) +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green")
+  ) +
+  facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Genomic position",
+    y = "Cell‐type",
+    fill = "Pattern"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    panel.grid = element_blank()
+  )
+```
+
+
+
+
+
+```{r}
+dt_XIST_summary <- dt_final %>%
+  filter(str_detect(Gene, "XIST"), total >= 2) %>%
+  group_by(SCTsample, POS, BroadCategory_cellType) %>%
+  summarise(
+    n_cells = n(),
+    n_ref   = sum(ALTcount == 0),
+    n_alt   = sum(REFcount == 0),
+    # anything left is mixed:
+    n_mix   = n_cells - n_ref - n_alt,
+    pattern = case_when(
+      n_ref   == n_cells ~ "REF-only",
+      n_alt   == n_cells ~ "ALT-only",
+      TRUE               ~ "Mixed"
+    ),
+    .groups = "drop"
+  )
+
+
+# collapse across all SNP sites within each sample×celltype
+dt_plot <- dt_XIST_summary %>%
+  # keep only REF‐only and Mixed (drop pure ALT if you like)
+  #filter(pattern %in% c("REF-only","Mixed", "ALT-only")) %>%
+  group_by(SCTsample, BroadCategory_cellType, pattern) %>%
+  summarise(cells = sum(n_cells), .groups = "drop") %>%
+  group_by(SCTsample, BroadCategory_cellType) %>%
+  mutate(frac = cells / sum(cells))
+
+ggplot(dt_plot,
+       aes(x = BroadCategory_cellType, y = frac, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"),
+    name   = "Expression\npattern"
+  ) +
+  facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Fraction of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+ggplot(dt_plot,
+       aes(x = BroadCategory_cellType, y = cells, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"), 
+    name   = "Expression\npattern"
+  ) +
+  facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Number of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+ggplot(dt_plot,
+       aes(x = BroadCategory_cellType, y = frac, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"), 
+    name   = "Expression\npattern"
+  ) +
+  #facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Number of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+ggplot(dt_plot,
+       aes(x = BroadCategory_cellType, y = cells, fill = pattern)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c("REF-only" = "blue",
+               "ALT-only" = "magenta",
+               "Mixed"    = "green"), 
+    name   = "Expression\npattern"
+  ) +
+  #facet_wrap(~ SCTsample, nrow = 1, scales = "free_x") +
+  labs(
+    x = "Cell‐type",
+    y = "Number of XIST-positive cells",
+    title = "REF-only vs Mixed XIST expression by cell‐type"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+SCT02_dt_withWrapped_SCT02_4ctsCutoff = filter(dt_final_withWrappedVAF, total >= 4) # SCTsample == "SCT02",
+str(SCT02_dt_withWrapped_SCT02_4ctsCutoff)
+
+# 1) Annotate the SNP table
+SCT02_dt_withWrapped_SCT02_4ctsCutoff <- SCT02_dt_withWrapped_SCT02_4ctsCutoff %>%
+  mutate(
+    IsExpressedFrom2Chr = (WrappedALTratio != 0)
+  )
+
+# 2) Get cell‐barcode lists for XIST+ vs XIST–
+CellsXISTpos <- WhichCells(nucSamples, expression = XIST > 0)
+CellsXISTneg <- WhichCells(nucSamples, expression = XIST == 0)
+
+# 3) Subset for the combinations you want
+SCT02_wrapped_XaXaXISTneg <- SCT02_dt_withWrapped_SCT02_4ctsCutoff %>%
+  filter(
+    Xa_Called_Sex == "XaXa",
+    cell_barcode %in% CellsXISTneg
+  )
+
+SCT02_wrapped_XaXiXISTpos <- SCT02_dt_withWrapped_SCT02_4ctsCutoff %>%
+  filter(
+    Xa_Called_Sex == "XaXi",
+    cell_barcode %in% CellsXISTpos
+  )
+
+
+# Print the table for the number of variants with Bi-allelic or mono-allelic expression
+table(SCT02_wrapped_XaXaXISTneg$IsExpressedFrom2Chr, SCT02_wrapped_XaXaXISTneg$XCIgeneStatus)
+table(SCT02_wrapped_XaXiXISTpos$IsExpressedFrom2Chr, SCT02_wrapped_XaXiXISTpos$XCIgeneStatus)
+
+
+
+#######
+# Map onto cell type 
+#######
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+df_comb <- bind_rows(
+  SCT02_wrapped_XaXaXISTneg %>% mutate(Group = "XaXa_XISTneg"),
+  SCT02_wrapped_XaXiXISTpos %>% mutate(Group = "XaXi_XISTpos")
+)
+
+# 2) Keep only the inactive genes
+df_inactive <- df_comb %>%
+  filter(XCIgeneStatus == "Inactive")
+
+# 1) Build a summary table with both counts
+df_counts <- df_inactive %>%
+  group_by(Group, SubCategory_cellType) %>%
+  summarise(
+    bi    = sum(IsExpressedFrom2Chr),
+    mono  = n() - bi,
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols      = c(bi, mono),
+    names_to  = "Allele",
+    values_to = "Count"
+  ) %>%
+  mutate(Allele = recode(Allele,
+                         bi   = "Bi-allelic",
+                         mono = "Mono-allelic"
+  ))
+
+# 2) Plot
+ggplot(df_counts, aes(x = SubCategory_cellType, y = Count, fill = Allele)) +
+  geom_col() +
+  facet_wrap(~Group, nrow = 2, scales = "free_y") +
+  labs(
+    x    = "Cell type",
+    y    = "Number of variants",
+    fill = "Expression",
+    title= "Mono- vs Bi-allelic variants per cell type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+ggplot(df_counts, aes(SubCategory_cellType, Count, fill = Allele)) +
+  geom_col(position = "fill") +
+  facet_wrap(~Group, nrow = 2) +
+  scale_y_continuous(labels = scales::percent_format(1), 
+                     name   = "% of variants") +
+  labs(
+    x     = "Cell type",
+    fill  = "Expression",
+    title = "Proportion mono- vs bi-allelic variants per cell type"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+```
+
+
+```{r}
+#############
+# summarize by cell
+##########
+
+
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+
+# 1) Summarize per cell
+df_cells <- df_comb %>%
+  group_by(
+    cell_barcode,
+    SCTsample,
+    Sex,
+    SubCategory_cellType,
+    BroadCategory_cellType,
+    Xa_called,
+    Xa_Called_Sex,
+    Group
+  ) %>%
+  summarise(
+    # TRUE if any variant in that cell is bi-allelic
+    IsCellBiAllelic = any(IsExpressedFrom2Chr),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Allele = if_else(IsCellBiAllelic, "Bi-allelic", "Mono-allelic")
+  )
+# 2) Count cells by Group, cell type, and Allele
+df_cell_counts <- df_cells %>%
+  count(Group, SubCategory_cellType, Allele, name = "n_cells")
+
+# 3) Make the 100% stacked bar plot (% of cells)
+ggplot(df_cell_counts, aes(x = SubCategory_cellType, y = n_cells, fill = Allele)) +
+  geom_col(position = "fill") +
+  facet_wrap(~Group, nrow = 2) +
+  scale_y_continuous(
+    labels = percent_format(1),
+    name   = "% of cells"
+  ) +
+  labs(
+    x     = "Cell type",
+    fill  = "Allelic status",
+    title = "Mono- vs Bi-allelic cells per cell type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+
+# BY Broad category
+# 2) Count cells by Group, cell type, and Allele
+df_cell_counts <- df_cells %>%
+  count(Group, BroadCategory_cellType, Allele, name = "n_cells")
+
+# 3) Make the 100% stacked bar plot (% of cells)
+ggplot(df_cell_counts, aes(x = BroadCategory_cellType, y = n_cells, fill = Allele)) +
+  geom_col(position = "fill") +
+  facet_wrap(~Group, nrow = 2) +
+  scale_y_continuous(
+    labels = percent_format(1),
+    name   = "% of cells"
+  ) +
+  labs(
+    x     = "Cell type",
+    fill  = "Allelic status",
+    title = "Mono- vs Bi-allelic cells per cell type"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x    = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Let's start with SCT06
+```{r}
+library(tidyverse)
+
+# Assume snp_df_SCT06 is your QC-passed SNP data for SCT06,
+# and it already contains the computed alt_ratio (ALTcount/(ALTcount+REFcount))
+# and the cell metadata column "HiResNamedOrdered" (indicating cell type).
+
+# Replace "YourCellType" with the actual cell type you want to examine.
+cell_type_of_interest <- "vasc_endo"
+
+# Filter the data to include only the cells of interest
+snp_subset <- snp_df_SCT02 %>%
+  filter(HiResNamedOrdered == cell_type_of_interest)
+
+# Now, aggregate by gene: compute the median and mean alt_ratio per gene
+gene_summary <- snp_subset %>%
+  group_by(Gene) %>%
+  summarise(
+    median_alt_ratio = median(alt_ratio, na.rm = TRUE),
+    mean_alt_ratio = mean(alt_ratio, na.rm = TRUE),
+    n_variants = n()
+  ) %>%
+  ungroup()
+
+# Print the summary for inspection
+print(gene_summary)
+
+# Optionally, visualize the distribution of allelic ratios:
+ggplot(gene_summary, aes(x = median_alt_ratio)) +
+  geom_histogram(binwidth = 0.05, fill = "steelblue", color = "black") +
+  labs(title = paste("Allelic Ratio Distribution for", cell_type_of_interest),
+       x = "Median ALT Ratio per Gene",
+       y = "Number of Genes") +
+  theme_minimal()
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# 1. For each sample×position, count how many cells call REF vs ALT
+pos_counts <- XIST_dt %>%
+  group_by(SCTsample, POS, BroadCategory_cellType) %>%
+  summarise(
+    n_cells = n(),
+    n_ref   = sum(ALTcount == 0),   # cells where ALTcount==0 → REF-only
+    n_alt   = sum(REFcount == 0),   # cells where REFcount==0 → ALT-only
+    .groups = "drop"
+  )
+
+# 2. (Optional) Filter to positions seen in at least X cells
+min_cells <- 3
+pos_counts <- pos_counts %>% 
+  filter(n_cells >= min_cells)
+
+# 3. Call each position “Single” vs “Mixed”
+pos_counts <- pos_counts %>%
+  mutate(
+    pos_pattern = ifelse(
+      n_ref == n_cells | n_alt == n_cells,
+      "Single",
+      "Mixed"
+    )
+  )
+
+# 4. Summarise per sample
+pos_summary <- pos_counts %>%
+  count(SCTsample, pos_pattern, BroadCategory_cellType) %>%
+  group_by(BroadCategory_cellType) %>%
+  mutate(frac = n / sum(n)) %>%
+  ungroup()
+
+# 5. Quick view:
+pos_summary
+# A tibble: 12 × 4
+#   SCTsample pos_pattern     n  frac
+#   <fct>     <chr>        <int> <dbl>
+# 1 SCT01     Mixed           10 0.15
+# 2 SCT01     Single          57 0.85
+# 3 SCT02     Mixed            5 0.10
+# 4 SCT02     Single          45 0.90
+# # … etc.
+
+# 6. Plot it:
+ggplot(pos_summary, aes(x = BroadCategory_cellType, y = frac, fill = pos_pattern)) +
+  geom_col(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "Sample",
+    y = "% of XIST SNP positions",
+    fill = "Position pattern"
+  ) +
+  facet_wrap(~ SCTsample, ncol = 5) +
+  theme_classic()
+
+```

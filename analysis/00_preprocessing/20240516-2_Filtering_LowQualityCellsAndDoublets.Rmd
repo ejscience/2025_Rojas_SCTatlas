@@ -1,0 +1,651 @@
+---
+title: "Filtering the single cell and nuclear RNAseq - doublets, gene level low counts, and low quality cells"
+output: html_notebook
+
+---
+
+# Integration of all the cells since they are single nuclei
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath("/mnt/DATA/LairdLab/rojas/SCT_01to10_TotalAtlas/")) 
+
+{ library(Seurat)
+  library(tidyverse)
+  library(Matrix)
+  library(scales)
+  library(cowplot)
+  library(RCurl)
+  #library(Matrix.utils) #
+  library(clustree)
+  library(ComplexHeatmap) 
+  library(readxl)
+  #library(EnhancedVolcano) #
+  library(BiocManager)
+  #library(AnnotationHub) #
+  library(SoupX)
+  library(scCustomize)
+  library(DoubletFinder)
+}
+
+```
+
+## Load the SoupX corrected counts
+
+Load the SoupX corrected counts and check that they look good. 
+
+```{r}
+#---------- 
+#Load the SoupX corrected counts. 
+#----------
+
+# Load the Seurat objects from RDS files
+SCT01_raw <- readRDS("data/SCT01_rawSeurat_SoupXcorrected-20231128.rds")
+SCT02_raw <- readRDS("data/SCT02_rawSeurat_SoupXcorrected-20231128.rds")
+SCT03_raw <- readRDS("data/SCT03_rawSeurat_SoupXcorrected-20231128.rds")
+SCT01n_raw <- readRDS("data/SCT01n_rawSeurat_SoupXcorrected-20231128.rds")
+SCT06_raw <- readRDS("data/SCT06_rawSeurat_SoupXcorrected-20231128.rds")
+SCT09_raw <- readRDS("data/SCT09_rawSeurat_SoupXcorrected-20231128.rds")
+SCT10_raw <- readRDS("data/SCT10_rawSeurat_SoupXcorrected-20231128.rds")
+
+```
+
+## Add QC metrics
+I chose to just add the QC metrics from `scCustomize` because this package has been well updated and used. It adds all the QC to the metadata in 1 function [homepage](https://samuel-marsh.github.io/scCustomize/)
+
+```{r}
+SCT01_raw <- Add_Cell_QC_Metrics(seurat_object = SCT01_raw, species = "human")
+SCT02_raw <- Add_Cell_QC_Metrics(seurat_object = SCT02_raw, species = "human")
+SCT03_raw <- Add_Cell_QC_Metrics(seurat_object = SCT03_raw, species = "human")
+SCT01n_raw <- Add_Cell_QC_Metrics(seurat_object = SCT01n_raw, species = "human")
+SCT06_raw <- Add_Cell_QC_Metrics(seurat_object = SCT06_raw, species = "human")
+SCT09_raw <- Add_Cell_QC_Metrics(seurat_object = SCT09_raw, species = "human")
+SCT10_raw <- Add_Cell_QC_Metrics(seurat_object = SCT10_raw, species = "human")
+
+#pdf(file = "figures/qcPlots_SCT01to06.pdf", width = 14)
+QC_Plots_Combined_Vln(seurat_object = SCT01_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 20, pt.size = 0)
+QC_Plots_Combined_Vln(seurat_object = SCT02_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 5, pt.size = 0)
+QC_Plots_Combined_Vln(seurat_object = SCT03_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 5, pt.size = 0)
+QC_Plots_Combined_Vln(seurat_object = SCT01n_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 5, pt.size = 0)
+QC_Plots_Combined_Vln(seurat_object = SCT06_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 5, pt.size = 0)
+QC_Plots_Combined_Vln(seurat_object = SCT09_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 5, pt.size = 0)
+QC_Plots_Combined_Vln(seurat_object = SCT10_raw, 
+                             feature_cutoffs = c(1000, 5500), 
+                             UMI_cutoffs = c(1500), 
+                             mito_cutoffs = 5, pt.size = 0)
+#dev.off()
+```
+
+```{r}
+merged_seurat <- merge(x = SCT01_raw, 
+                       y = c(SCT02_raw, SCT03_raw, SCT01n_raw, SCT06_raw, SCT09_raw, SCT10_raw),
+                       add.cell.id = c("SCT01", "SCT02", "SCT03", "SCT01n","SCT06", "SCT09", "SCT10"))
+
+#Density Plot - RNA_features
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=nFeature_RNA, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("Genes per Cell") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma) + # makes x axis log scale
+  geom_vline(xintercept = 1000) # vertical line at X transcripts per cell
+  
+#Density Plot - Counts per cell
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=nCount_RNA, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("UMI") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma) + # makes x axis log scale
+  geom_vline(xintercept = 1500) + # vertical line at 500 transcripts per cell
+  geom_vline(xintercept = 20000, linetype="dotted") # vertical line at 500 transcripts per cell
+
+#Density Plot - Percent Mitochondria
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=percent.mt, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("% mito") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma, limits = c(0.001,100)) + # makes x axis log scale
+  geom_vline(xintercept = 5, linetype="dotted")  # vertical line at 5 % mito
+
+rm(merged_seurat)
+```
+
+
+
+## Set first filtering for SCT02 and 03
+
+I chose to subset at a Counts > 1500, Genes >1000, and percent mito <5% (except for the whole cell isolations being 20%)
+
+```{r}
+SCT01_filtered <- subset(x = SCT01_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 20))
+SCT02_filtered <- subset(x = SCT02_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 5))
+SCT03_filtered <- subset(x = SCT03_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 5))
+SCT01n_filtered <- subset(x = SCT01n_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 5))
+SCT06_filtered <- subset(x = SCT06_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 5))
+SCT09_filtered <- subset(x = SCT09_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 5))
+SCT10_filtered <- subset(x = SCT10_raw,
+                         subset= (nCount_RNA >= 1500) & 
+                           (nFeature_RNA >= 1000) & 
+                           (percent.mt < 5))
+rm(SCT01_raw, SCT02_raw, SCT01n_raw, SCT03_raw, SCT06_raw, SCT09_raw, SCT10_raw)
+```
+
+## Doublet Finder 
+
+I ran DoubletFinder on the data individually. Followed the way that Bioinformagician does it. 
+Be sure to edit the name for the collumn which has whether or not it is a doublet. 
+
+I used chatGPT to make a function that will let us run this
+```
+runDoubletFinder <- function(seurat_object, doublet_rate) {
+  # pK Identification
+  sweep.res.list <- paramSweep(seurat_object, PCs = 1:20, sct = FALSE)
+  sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)
+  bcmvn <- find.pK(sweep.stats)
+
+  pK <- bcmvn %>% filter(BCmetric == max(BCmetric)) %>% select(pK) %>% as.numeric(as.character(.))
+
+  # Homotypic Doublet Proportion Estimate
+  annotations <- seurat_object@meta.data$seurat_clusters
+  homotypic.prop <- modelHomotypic(annotations)
+  nExp_poi <- round(doublet_rate * nrow(seurat_object@meta.data))
+  nExp_poi.adj <- round(nExp_poi * (1 - homotypic.prop))
+
+  # Run DoubletFinder
+  seurat_object <- doubletFinder(seurat_object, PCs = 1:20, pN = 0.25, pK = pK, nExp = nExp_poi.adj, reuse.pANN = FALSE, sct = FALSE)
+
+  return(seurat_object)
+}
+```
+Where we set up the doublet rates before. I used the following doublet rates based on the recovered nuclei from the cellranger outs file.
+`doublet_rates <- c(SCT01 = 0.21, SCT02 = 0.123, SCT03 = 0.096, SCT01n = 0.0093, SCT06 = 0.114, SCT09 = 0.066, SCT10 = 0.092) `
+
+Be careful now that we run Seurat v5 there was a few updates needed for doublet finder
+
+```{r}
+#-----------
+# Doublet Finder 
+#-----------
+
+# PRE PROCESSING:__________________
+
+# Assuming object_list contains all your filtered Seurat objects
+object_list <- list(SCT01 = SCT01_filtered, SCT02 = SCT02_filtered, SCT03 = SCT03_filtered, 
+                    SCT01n = SCT01n_filtered, SCT06 = SCT06_filtered, SCT09 = SCT09_filtered, 
+                    SCT10 = SCT10_filtered)
+
+# General Seurat Processing Steps
+for (i in names(object_list)) {
+  seurat_object <- object_list[[i]]
+  
+  seurat_object <- NormalizeData(object = seurat_object)
+  seurat_object <- FindVariableFeatures(object = seurat_object)
+  seurat_object <- ScaleData(object = seurat_object)
+  seurat_object <- RunPCA(object = seurat_object)
+  seurat_object <- FindNeighbors(object = seurat_object, dims = 1:20)
+  seurat_object <- FindClusters(object = seurat_object)
+  seurat_object <- RunUMAP(object = seurat_object, dims = 1:20)
+  
+  # Put processed object back into the original list
+  object_list[[i]] <- seurat_object
+}
+
+# FUNCTION to run DoubletFinder and related steps
+runDoubletFinder <- function(seurat_object, doublet_rate) {
+  # pK Identification
+  sweep.res.list <- paramSweep(seurat_object, PCs = 1:20, sct = FALSE)
+  sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)
+  bcmvn <- find.pK(sweep.stats)
+
+  pK <- bcmvn %>% filter(BCmetric == max(BCmetric)) %>% select(pK) %>% as.numeric(as.character(.))
+
+  # Homotypic Doublet Proportion Estimate
+  annotations <- seurat_object@meta.data$seurat_clusters
+  homotypic.prop <- modelHomotypic(annotations)
+  nExp_poi <- round(doublet_rate * nrow(seurat_object@meta.data))
+  nExp_poi.adj <- round(nExp_poi * (1 - homotypic.prop))
+
+  # Run DoubletFinder
+  seurat_object <- doubletFinder(seurat_object, PCs = 1:20, pN = 0.25, pK = pK, nExp = nExp_poi.adj, reuse.pANN = FALSE, sct = FALSE)
+
+  return(seurat_object)
+}
+
+##**** Apply DoubletFinder to each sample in object_list
+doublet_rates <- c(SCT01 = 0.21, SCT02 = 0.123, SCT03 = 0.096, SCT01n = 0.0093, SCT06 = 0.114, SCT09 = 0.066, SCT10 = 0.092) # Replace with your calculated rates
+for (i in names(object_list)) {
+  object_list[[i]] <- runDoubletFinder(object_list[[i]], doublet_rates[[i]])
+}
+
+# Extract processed Seurat objects back into the original variables
+SCT01_filtered <- object_list[["SCT01"]]
+SCT02_filtered <- object_list[["SCT02"]]
+SCT03_filtered <- object_list[["SCT03"]]
+SCT01n_filtered <- object_list[["SCT01n"]]
+SCT06_filtered <- object_list[["SCT06"]]
+SCT09_filtered <- object_list[["SCT09"]]
+SCT10_filtered <- object_list[["SCT10"]]
+
+
+rm(object_list)
+```
+
+
+```{r}
+# VISUALIZE DOUBLETS! - need to write the right name 
+head(SCT01_filtered@meta.data)
+head(SCT02_filtered@meta.data)
+head(SCT03_filtered@meta.data)
+head(SCT01n_filtered@meta.data)
+head(SCT06_filtered@meta.data)
+head(SCT09_filtered@meta.data)
+head(SCT10_filtered@meta.data)
+
+#pdf(file = "figures/doubletCounds_SCT01to06.pdf", width = 14)
+DimPlot(SCT01_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_3_4617", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT02_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_30_1298", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT03_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_26_526", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT01n_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_13_4", order = T) #need to update the group.by with your column name.
+DimPlot(SCT06_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_2_969", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT09_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_23_151", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT10_filtered, reduction = 'umap', group.by = "DF.classifications_0.25_2_306", order = T) #need to update the group.by with your column name. 
+
+
+#dev.off()
+```
+
+
+# scDblFinder as 2nd singlet approach
+
+scDblFinder wants cells to be high quality. But I don't remove the high Feature Ones
+```{r eval=FALSE, include=FALSE}
+# DO NOT RUN. 
+SCT01_filtered_scDbl <- subset(x = SCT01_filtered,
+                         subset= (nCount_RNA >= 2000) & 
+                           (nFeature_RNA >= 1100) & 
+                           (percent.mt < 20))
+SCT02_filtered_scDbl <- subset(x = SCT02_filtered,
+                         subset= (nCount_RNA >= 2000) & 
+                           (nFeature_RNA >= 1100) & 
+                           (percent.mt < 5))
+SCT03_filtered_scDbl <- subset(x = SCT03_filtered,
+                         subset= (nCount_RNA >= 2000) & 
+                           (nFeature_RNA >= 1100) & 
+                           (percent.mt < 5))
+SCT06_filtered_scDbl <- subset(x = SCT06_filtered,
+                         subset= (nCount_RNA >= 2000) & 
+                           (nFeature_RNA >= 1100) & 
+                           (percent.mt < 5))
+SCT09_filtered_scDbl <- subset(x = SCT09_filtered,
+                         subset= (nCount_RNA >= 2000) & 
+                           (nFeature_RNA >= 1100) & 
+                           (percent.mt < 5))
+SCT10_filtered_scDbl <- subset(x = SCT10_filtered,
+                         subset= (nCount_RNA >= 2000) & 
+                           (nFeature_RNA >= 1100) & 
+                           (percent.mt < 5))
+```
+
+scDblFinder will add a number of columns to the colData of sce prefixed with ‘scDblFinder’, the most important of which are:
+* sce$scDblFinder.score : the final doublet score
+* sce$scDblFinder.class : the classification (doublet or singlet)
+
+```{r}
+library(scDblFinder)
+process_sample_scDblFinder <- function(seurat_obj, sample_id) {
+  # Convert Seurat object to SingleCellExperiment
+  sce_obj <- as.SingleCellExperiment(seurat_obj)
+  
+  # Run scDblFinder on the SingleCellExperiment object
+  sce_obj <- scDblFinder(sce_obj)
+  
+  # Add sample ID prefix to cell names
+  #rownames(sce_obj@colData) <- paste0(sample_id, "_", rownames(sce_obj@colData))
+  
+  # Extract 'scDblFinder.class' and 'scDblFinder.score' columns from the metadata
+  dbl_scores <- sce_obj@colData[, c("scDblFinder.class", "scDblFinder.score")]
+  
+  return(dbl_scores)
+}
+
+```
+
+```{r}
+# Process each sample
+SCT01_dbl_scores <- process_sample_scDblFinder(SCT02_filtered, "SCT01")
+SCT02_dbl_scores <- process_sample_scDblFinder(SCT02_filtered, "SCT02")
+SCT03_dbl_scores <- process_sample_scDblFinder(SCT03_filtered, "SCT03")
+SCT01n_dbl_scores <- process_sample_scDblFinder(SCT01n_filtered, "SCT01n")
+SCT06_dbl_scores <- process_sample_scDblFinder(SCT06_filtered, "SCT06")
+SCT09_dbl_scores <- process_sample_scDblFinder(SCT06_filtered, "SCT09")
+SCT10_dbl_scores <- process_sample_scDblFinder(SCT06_filtered, "SCT10")
+
+
+```
+```{r}
+
+SCT01_filtered <- AddMetaData(SCT01_filtered, metadata = SCT01_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+SCT02_filtered <- AddMetaData(SCT02_filtered, metadata = SCT02_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+SCT03_filtered <- AddMetaData(SCT03_filtered, metadata = SCT03_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+SCT01n_filtered <- AddMetaData(SCT01n_filtered, metadata = SCT01n_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+SCT06_filtered <- AddMetaData(SCT06_filtered, metadata = SCT06_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+SCT09_filtered <- AddMetaData(SCT09_filtered, metadata = SCT09_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+SCT10_filtered <- AddMetaData(SCT10_filtered, metadata = SCT10_dbl_scores[, "scDblFinder.class"], col.name = "scDblFinder.class")
+
+SCT01_filtered <- AddMetaData(SCT01_filtered, metadata = SCT01_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+SCT02_filtered <- AddMetaData(SCT02_filtered, metadata = SCT02_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+SCT03_filtered <- AddMetaData(SCT03_filtered, metadata = SCT03_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+SCT01n_filtered <- AddMetaData(SCT01n_filtered, metadata = SCT01n_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+SCT06_filtered <- AddMetaData(SCT06_filtered, metadata = SCT06_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+SCT09_filtered <- AddMetaData(SCT09_filtered, metadata = SCT09_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+SCT10_filtered <- AddMetaData(SCT10_filtered, metadata = SCT10_dbl_scores[, "scDblFinder.score"], col.name = "scDblFinder.score")
+
+rm(SCT01_dbl_scores, SCT02_dbl_scores, SCT03_dbl_scores,SCT01n_dbl_scores, SCT06_dbl_scores, SCT09_dbl_scores, SCT10_dbl_scores)
+```
+
+```{r}
+DimPlot(SCT01_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT02_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT03_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT01n_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name.
+DimPlot(SCT06_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT09_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name. 
+DimPlot(SCT10_filtered, reduction = 'umap', group.by = "scDblFinder.class", order = T) #need to update the group.by with your column name. 
+```
+
+
+
+
+
+
+
+## Merging the singlets into one Seurat Object
+
+```{r}
+#FILTER THE SINGLETS INTO THE NEW SEURAT OBJECT AND MERGE
+SCT01_filtered_singlets <- subset(SCT01_filtered, 
+                                  subset = (DF.classifications_0.25_3_4617 == "Singlet") & 
+                                    (scDblFinder.class == "singlet"))
+SCT02_filtered_singlets <- subset(SCT02_filtered, 
+                                  subset = (DF.classifications_0.25_30_1298 == "Singlet") & 
+                                    (scDblFinder.class == "singlet")) 
+SCT03_filtered_singlets <- subset(SCT03_filtered, 
+                                  subset = (DF.classifications_0.25_26_526 == "Singlet") & 
+                                    (scDblFinder.class == "singlet"))
+SCT01n_filtered_singlets <- subset(SCT01n_filtered, 
+                                   subset = (DF.classifications_0.25_13_4 == "Singlet") & 
+                                    (scDblFinder.class == "singlet"))
+SCT06_filtered_singlets <- subset(SCT06_filtered, 
+                                  subset = (DF.classifications_0.25_2_969 == "Singlet") & 
+                                    (scDblFinder.class == "singlet"))
+SCT09_filtered_singlets <- subset(SCT09_filtered, 
+                                  subset = (DF.classifications_0.25_23_151 == "Singlet") & 
+                                    (scDblFinder.class == "singlet")) 
+SCT10_filtered_singlets <- subset(SCT10_filtered, 
+                                  subset = (DF.classifications_0.25_2_306 == "Singlet") & 
+                                    (scDblFinder.class == "singlet"))
+
+
+rm(SCT01_filtered, SCT02_filtered, SCT03_filtered, SCT01n_filtered, SCT06_filtered, SCT09_filtered, SCT10_filtered)
+
+merged_seurat <- merge(x = SCT01_filtered_singlets, 
+                       y = c(SCT02_filtered_singlets, SCT03_filtered_singlets, SCT01n_filtered_singlets, SCT06_filtered_singlets, SCT09_filtered_singlets, SCT10_filtered_singlets),
+                       add.cell.id = c("SCT01", "SCT02", "SCT03", "SCT01n","SCT06", "SCT09", "SCT10"))
+```
+
+## Cleaning up the merged seurat metadata
+I added information for SCT02, nuclei vs cells, and the batch. 
+
+```{r}
+#Clean up the merged seurat metadata!!!
+# Create metadata dataframe
+metadata <- merged_seurat@meta.data
+# Add cell IDs to metadata
+metadata$cells <- rownames(metadata)
+# Create sample column
+metadata$sample <- NA
+metadata$sample[which(str_detect(metadata$cells, "^SCT01_"))] <- "SCT01"
+metadata$sample[which(str_detect(metadata$cells, "^SCT02_"))] <- "SCT02"
+metadata$sample[which(str_detect(metadata$cells, "^SCT03_"))] <- "SCT03"
+metadata$sample[which(str_detect(metadata$cells, "^SCT01n_"))] <- "SCT01n"
+metadata$sample[which(str_detect(metadata$cells, "^SCT06_"))] <- "SCT06"
+metadata$sample[which(str_detect(metadata$cells, "^SCT09_"))] <- "SCT09"
+metadata$sample[which(str_detect(metadata$cells, "^SCT10_"))] <- "SCT10"
+
+#create a nuclei and cells collumn
+metadata$cellornuc <- NA
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT01_"))] <- "cells"
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT02_"))] <- "nuclei"
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT03_"))] <- "nuclei"
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT01n_"))] <- "nuclei"
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT06_"))] <- "nuclei"
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT09_"))] <- "nuclei"
+metadata$cellornuc[which(str_detect(metadata$cells, "^SCT10_"))] <- "nuclei"
+
+#create a batchID
+metadata$batch <- NA
+metadata$batch[which(str_detect(metadata$cells, "^SCT01_"))] <- "01"
+metadata$batch[which(str_detect(metadata$cells, "^SCT02_"))] <- "02-03"
+metadata$batch[which(str_detect(metadata$cells, "^SCT03_"))] <- "02-03"
+metadata$batch[which(str_detect(metadata$cells, "^SCT01n_"))] <- "01n-06"
+metadata$batch[which(str_detect(metadata$cells, "^SCT06_"))] <- "01n-06"
+metadata$batch[which(str_detect(metadata$cells, "^SCT09_"))] <- "09-10"
+metadata$batch[which(str_detect(metadata$cells, "^SCT10_"))] <- "09-10"
+
+# Add metadata back to Seurat object
+merged_seurat@meta.data <- metadata
+
+```
+
+# Graph out some of the data and pick the final filtered seurat 
+Look at the cells expected, Features and Counts
+
+```{r}
+# to the number of cells you expected
+#pdf(file = "figures/filteringCombinedSeurat_SCT01to06.pdf", width = 14)
+merged_seurat@meta.data %>% 
+  ggplot(aes(x=sample, fill=sample, color = sample)) + 
+  geom_bar(size = 0.6) + 
+  #scale_fill_manual(values = fill) + #adds custom color scheme
+  #scale_color_manual(values = outline) + #adds custom outline
+  theme_classic(base_size = 13) +
+  xlab("Sample") + # x axis label
+  ylab("Cells") + #y axis label
+  ggtitle("Number of Cells per Sample") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) # removes title for legend
+
+#Density Plot - RNA_features
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=nFeature_RNA, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("Genes per Cell") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma) + # makes x axis log scale
+  geom_vline(xintercept = 1000) # vertical line at X transcripts per cell
+  
+#Density Plot - Counts per cell
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=nCount_RNA, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("UMI") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma) + # makes x axis log scale
+  geom_vline(xintercept = 1500) + # vertical line at 500 transcripts per cell
+  geom_vline(xintercept = 25000, linetype="dotted") # vertical line at 500 transcripts per cell
+
+#Density Plot - Percent Mitochondria
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=orig.ident, x=percent.mt, fill= orig.ident)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("% mito") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma, limits = c(0.001,100)) + # makes x axis log scale
+  geom_vline(xintercept = 5, linetype="dotted")  # vertical line at 5 % mito
+
+#Density Plot - Percent Ribosome
+merged_seurat@meta.data %>% 
+  ggplot(aes(color=sample, x=percent_ribo, fill= sample)) +
+  geom_density(alpha = 0.2) + #density plot
+  theme_classic(base_size = 13) +
+  ylab("Density") + #y axis label
+  ggtitle("% ribo") + # graph title 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + # angles x axis labels and moves over
+  theme(plot.title = element_text(hjust=0.5, face="bold")) + #bolds title and moves up
+  theme(legend.title = element_blank()) + # removes title for legend
+  scale_x_log10(labels = comma)  # makes x axis log scale
+  #geom_vline(xintercept = 20, linetype="dotted")  # vertical line at 5 % mito
+
+#dev.off()
+
+filtered_seurat <- subset(x = merged_seurat, 
+                          subset= (nCount_RNA >= 1500) & 
+                            (nCount_RNA <= 25000) & 
+                            (nFeature_RNA >= 1000) &
+                            (percent.mt < 20) ) #&
+                            #(percent.ribo < 20))
+rm(merged_seurat)
+```
+
+
+## Gene level filtering 
+For both the filtered seurat and the singlets 
+
+Before that I will save the not gene level filtered objects
+```{r}
+#SAVE THE RDS FILES!
+saveRDS(SCT01_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+saveRDS(SCT02_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT02_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+saveRDS(SCT03_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT03_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+saveRDS(SCT01n_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01n_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+saveRDS(SCT06_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT06_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+saveRDS(SCT09_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT09_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+saveRDS(SCT10_filtered_singlets, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT10_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20240517.rds")
+
+saveRDS(filtered_seurat, file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/mergedSCT-01-02-03-01n-06-09-10_filtered_singlets_NOTgeneLevelFiltered_SoupX_20240517.rds")
+
+
+
+# Load in the old data to skip re-doing
+# > SCT01_filtered_singlets = readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20231202.rds")
+# > SCT02_filtered_singlets = readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT02_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20231202.rds")
+# > SCT03_filtered_singlets = readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT03_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20231202.rds")
+# > SCT01n_filtered_singlets = readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01n_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20231202.rds")
+# > SCT06_filtered_singlets = readRDS(file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT06_singlets_filtered_NOTgeneLevelFiltered_SoupXcorrected_20231202.rds")
+
+```
+
+# Filtering the low level genes to just clean out the data. 
+
+
+
+```{r}
+geneLevelFiltering <- function(seurat_obj, remove_mito = TRUE) {
+    # Extract counts
+    counts <- GetAssayData(object = seurat_obj, layer = "counts")
+    
+    # Determine nonzero counts
+    nonzero <- counts > 0
+    
+    # Determine genes to keep based on nonzero expression in at least 10 cells
+    keep_genes <- rowSums(nonzero) >= 10
+    
+    # Optional: Remove mitochondrial genes
+    if (remove_mito) {
+        # Identify mitochondrial genes (assuming they start with "MT-")
+        mito_genes <- grep("^MT-", rownames(counts), value = TRUE)
+        
+        # Exclude mitochondrial genes from the list of genes to keep
+        keep_genes <- keep_genes & !rownames(counts) %in% mito_genes
+    }
+    
+    # Filter counts for genes to keep
+    filtered_counts <- counts[keep_genes, ]
+    
+    # Create a new Seurat object with filtered genes
+    filtered_seurat_tmp <- CreateSeuratObject(counts = filtered_counts, meta.data = seurat_obj@meta.data)
+    
+    return(filtered_seurat_tmp)
+}
+```
+
+```{r}
+SCT01 <- geneLevelFiltering(SCT01_filtered_singlets, remove_mito = F)
+SCT02 <- geneLevelFiltering(SCT02_filtered_singlets, remove_mito = TRUE)
+SCT03 <- geneLevelFiltering(SCT03_filtered_singlets, remove_mito = TRUE)
+SCT01n <- geneLevelFiltering(SCT01n_filtered_singlets, remove_mito = TRUE)
+SCT06 <- geneLevelFiltering(SCT06_filtered_singlets, remove_mito = TRUE)
+SCT09 <- geneLevelFiltering(SCT09_filtered_singlets, remove_mito = TRUE)
+SCT10 <- geneLevelFiltering(SCT10_filtered_singlets, remove_mito = TRUE)
+
+saveRDS(SCT01 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01_singlets_filtered_geneLevelFiltered_MT-NOTremoved_SoupXcorrected_20240517.rds")
+saveRDS(SCT02 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT02_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+saveRDS(SCT03 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT03_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+saveRDS(SCT01n , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT01n_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+saveRDS(SCT06 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT06_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+saveRDS(SCT09 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT09_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+saveRDS(SCT10 , file = "data/20240516-2_Filtering_LowQualityCellsAndDoublets/SCT10_singlets_filtered_geneLevelFiltered_MTremoved_SoupXcorrected_20240517.rds")
+```
+
